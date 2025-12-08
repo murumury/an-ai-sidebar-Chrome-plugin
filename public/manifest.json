@@ -1,0 +1,38 @@
+{
+    "manifest_version": 3,
+    "name": "AI Sidebar",
+    "version": "1.0.0",
+    "description": "AI Sidebar with context awareness",
+    "permissions": [
+        "sidePanel",
+        "storage"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "side_panel": {
+        "default_path": "index.html"
+    },
+    "action": {
+        "default_title": "Open AI Sidebar"
+    },
+    "icons": {
+        "16": "icon.png",
+        "48": "icon.png",
+        "128": "icon.png"
+    },
+    "background": {
+        "service_worker": "service-worker.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ]
+}
