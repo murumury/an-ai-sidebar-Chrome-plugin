@@ -4,9 +4,10 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Copy, RotateCw, Pencil, Check } from 'lucide-react';
 import { clsx as cn } from 'clsx';
+import { CodeBlock } from './CodeBlock';
 
 interface ChatMessageProps {
-    id: string; // Added ID for identification
+    id: string;
     role: 'user' | 'assistant' | 'system';
     content: string;
     onRetry?: (id: string) => void;
@@ -37,19 +38,45 @@ export const ChatMessage = ({ id, role, content, onRetry, onEdit }: ChatMessageP
         setIsEditing(false);
     };
 
+    // Shared Markdown configuration
+    const markdownComponents = {
+        p: ({ node, ...props }: any) => <p className="mb-1 last:mb-0 break-all" {...props} />,
+        pre: ({ node, ...props }: any) => <>{props.children}</>, // Unwrap pre
+        code: ({ node, className, children, ...props }: any) => {
+            const match = /language-(\w+)/.exec(className || '');
+            const { inline } = props;
+            const isCodeBlock = !inline && match;
+
+            return isCodeBlock ? (
+                <CodeBlock language={match[0]} isUser={isUser}>
+                    {children}
+                </CodeBlock>
+            ) : (
+                <code
+                    className={cn(
+                        className,
+                        "rounded px-1 py-0.5",
+                        isUser
+                            ? "bg-black/10 dark:bg-white/10"
+                            : "bg-gray-100 dark:bg-gray-700"
+                    )}
+                    {...props}
+                >
+                    {children}
+                </code>
+            );
+        }
+    };
+
     return (
         <div className={cn(
             "group w-full text-gray-800 dark:text-gray-100",
-            // For AI (assistant), keep the full-width background. For User, transparent background.
             !isUser && "border-b border-black/5 dark:border-white/5 bg-gray-50 dark:bg-[#444654]"
         )}>
             <div className={cn(
                 "text-base gap-4 md:gap-6 md:max-w-2xl lg:max-w-xl xl:max-w-3xl flex lg:px-0 m-auto w-full p-4",
-                // User messages right-aligned
                 isUser ? "justify-end" : "justify-start"
             )}>
-                {/* Content & Actions */}
-                {/* Content & Actions */}
                 {isUser ? (
                     <div className="flex flex-col items-end max-w-[85%]">
                         <div className="bg-[#95ec69] dark:bg-[#2bcd42] text-black rounded-2xl px-4 py-2 relative overflow-hidden">
@@ -72,37 +99,7 @@ export const ChatMessage = ({ id, role, content, onRetry, onEdit }: ChatMessageP
                                     <ReactMarkdown
                                         remarkPlugins={[remarkGfm]}
                                         rehypePlugins={[rehypeHighlight]}
-                                        components={{
-                                            // Override pre/code styles if needed for the green bubble, 
-                                            // but default markdown-body styles should be acceptable (dark blocks).
-                                            // Ensure text wraps in paragraphs
-                                            p: ({ node, ...props }) => <p className="mb-1 last:mb-0 break-all" {...props} />,
-                                            // Custom Pre for conditional styling
-                                            pre: ({ node, ...props }) => (
-                                                <pre
-                                                    className={cn(
-                                                        "rounded-lg my-2 overflow-x-auto p-4",
-                                                        // User bubble: Dark semi-transparent background to contrast with green, but not pitch black
-                                                        // AI bubble: Default dark
-                                                        isUser ? "bg-black/10 dark:bg-black/20 text-sm" : "bg-[#0d1117]"
-                                                    )}
-                                                    {...props}
-                                                />
-                                            ),
-                                            // Custom Code to ensure text color visibility
-                                            code: ({ node, className, children, ...props }) => {
-                                                const match = /language-(\w+)/.exec(className || '');
-                                                return match ? (
-                                                    <code className={className} {...props}>
-                                                        {children}
-                                                    </code>
-                                                ) : (
-                                                    <code className={cn(className, isUser ? "bg-black/10 dark:bg-white/10 rounded px-1" : "bg-black/10 dark:bg-white/10 rounded px-1")} {...props}>
-                                                        {children}
-                                                    </code>
-                                                )
-                                            }
-                                        }}
+                                        components={markdownComponents}
                                     >
                                         {content}
                                     </ReactMarkdown>
@@ -132,6 +129,7 @@ export const ChatMessage = ({ id, role, content, onRetry, onEdit }: ChatMessageP
                                 <ReactMarkdown
                                     remarkPlugins={[remarkGfm]}
                                     rehypePlugins={[rehypeHighlight]}
+                                    components={markdownComponents}
                                 >
                                     {content}
                                 </ReactMarkdown>

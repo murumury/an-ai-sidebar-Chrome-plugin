@@ -20,6 +20,42 @@
   @apply rounded-lg my-2 overflow-x-auto p-4;
 }
 
+.markdown-body h1 {
+  @apply text-xl font-bold mb-4 mt-6 first:mt-0;
+}
+
+.markdown-body h2 {
+  @apply text-lg font-bold mb-3 mt-5;
+}
+
+.markdown-body h3 {
+  @apply text-base font-bold mb-2 mt-4;
+}
+
+.markdown-body h4 {
+  @apply text-sm font-bold mb-2 mt-4;
+}
+
+.markdown-body ul {
+  @apply list-disc list-outside ml-4 mb-4;
+}
+
+.markdown-body ol {
+  @apply list-decimal list-outside ml-4 mb-4;
+}
+
+.markdown-body li {
+  @apply mb-1;
+}
+
+.markdown-body a {
+  @apply text-blue-500 hover:underline;
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-gray-300 pl-4 py-1 my-4 italic text-gray-500 dark:border-gray-600 dark:text-gray-400;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
