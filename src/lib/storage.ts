@@ -83,6 +83,12 @@ export interface McpServerConfig {
     enabled: boolean;
 }
 
+export interface ProviderConfig {
+    apiKey: string;
+    model: string;
+    baseUrl?: string;
+}
+
 export interface Settings {
     provider: string;
     apiKey: string;
@@ -90,9 +96,22 @@ export interface Settings {
     model: string;
     temperature: number;
     mcpServers: McpServerConfig[];
+    providerSettings: Record<string, ProviderConfig>; // New: Store settings per provider
+    enableContext: boolean; // Control context awareness
 }
 
 const SETTINGS_KEY = 'user_settings';
+
+const DEFAULT_PROVIDER_SETTINGS: Record<string, ProviderConfig> = {
+    openai: { apiKey: '', model: 'gpt-4o', baseUrl: 'https://api.openai.com/v1' },
+    vivgrid: { apiKey: '', model: 'default', baseUrl: 'https://api.vivgrid.com/v1' },
+    anthropic: { apiKey: '', model: 'claude-3-opus-20240229', baseUrl: 'https://api.anthropic.com/v1' },
+    google: { apiKey: '', model: 'gemini-1.5-pro', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+    deepseek: { apiKey: '', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com' },
+    grok: { apiKey: '', model: 'grok-beta', baseUrl: 'https://api.x.ai/v1' },
+    custom: { apiKey: '', model: '', baseUrl: '' },
+};
+
 const DEFAULT_SETTINGS: Settings = {
     provider: 'openai',
     apiKey: '',
@@ -100,18 +119,39 @@ const DEFAULT_SETTINGS: Settings = {
     model: 'gpt-4o',
     temperature: 0.7,
     mcpServers: [],
+    providerSettings: DEFAULT_PROVIDER_SETTINGS,
+    enableContext: false, // Default false for privacy/permissions
 };
 
 export const getSettings = async (): Promise<Settings> => {
     if (typeof chrome === 'undefined' || !chrome.storage) return DEFAULT_SETTINGS;
     const result = await chrome.storage.local.get(SETTINGS_KEY);
-    const stored = result[SETTINGS_KEY] as Settings;
+    const stored = result[SETTINGS_KEY] as any;
 
-    // Defensive strategy: Ensure arrays are present even if stored object has undefined property
-    const merged = { ...DEFAULT_SETTINGS, ...stored };
-    if (!Array.isArray(merged.mcpServers)) {
-        merged.mcpServers = DEFAULT_SETTINGS.mcpServers;
+    if (!stored) return DEFAULT_SETTINGS;
+
+    // Smart Merge: Ensure new fields (providerSettings, mcpServers) exist
+    const merged: Settings = {
+        ...DEFAULT_SETTINGS,
+        ...stored,
+        providerSettings: { ...DEFAULT_SETTINGS.providerSettings, ...(stored.providerSettings || {}) },
+        mcpServers: Array.isArray(stored.mcpServers) ? stored.mcpServers : DEFAULT_SETTINGS.mcpServers,
+    };
+
+    // Migration: If migrating from old version where apiKey was flat but not in providerSettings
+    // We populate the 'openai' (or active provider) slot with the legacy flat values once
+    if (stored.apiKey && !stored.providerSettings) {
+        const active = merged.provider;
+        if (merged.providerSettings[active]) {
+            merged.providerSettings[active] = {
+                ...merged.providerSettings[active],
+                apiKey: stored.apiKey,
+                model: stored.model || merged.providerSettings[active].model,
+                baseUrl: stored.baseUrl || merged.providerSettings[active].baseUrl
+            };
+        }
     }
+
     return merged;
 };
 

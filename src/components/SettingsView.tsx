@@ -12,18 +12,6 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
     const [newServerUrl, setNewServerUrl] = useState('');
     const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
-    useEffect(() => {
-        getSettings().then(setSettings);
-    }, []);
-
-    const handleSave = async () => {
-        if (!settings) return;
-        setStatus('saving');
-        await saveSettings(settings);
-        setTimeout(() => setStatus('saved'), 500);
-        setTimeout(() => setStatus('idle'), 2000);
-    };
-
     // Predefined providers
     const PROVIDERS = [
         { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
@@ -35,16 +23,98 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
         { id: 'custom', name: 'Custom / Other', baseUrl: '' },
     ];
 
-    const handleProviderChange = (providerId: string) => {
-        const provider = PROVIDERS.find(p => p.id === providerId);
-        if (provider && settings) {
-            setSettings({
-                ...settings,
-                provider: providerId,
-                baseUrl: provider.baseUrl,
-                model: provider.defaultModel || settings.model // Keep existing model format or reset if needed
-            });
+    useEffect(() => {
+        getSettings().then(setSettings);
+    }, []);
+
+    const handleSave = async () => {
+        if (!settings) return;
+        setStatus('saving');
+
+        // Request Host Permission for Custom URL if needed
+        const currentUrl = settings.baseUrl;
+        if (currentUrl && !currentUrl.includes('localhost') && !currentUrl.includes('127.0.0.1')) {
+            try {
+                // Parse origin
+                const urlObj = new URL(currentUrl);
+                const origin = `${urlObj.protocol}//${urlObj.hostname}/*`;
+
+                // Only request if not already granted? Chrome handles overlap.
+                // Note: user gesture required. handleSave is clicked by user.
+                const granted = await chrome.permissions.request({
+                    origins: [origin]
+                });
+
+                if (!granted) {
+                    // Warn but save? Or block?
+                    console.warn("Permission not granted for", origin);
+                    // We save anyway, but it might fail to fetch. User choice.
+                }
+            } catch (e) {
+                console.error("Error requesting permission:", e);
+                // Invalid URL or other error
+            }
         }
+
+        await saveSettings(settings);
+        setTimeout(() => setStatus('saved'), 500);
+        setTimeout(() => setStatus('idle'), 2000);
+    };
+
+    // Helper to update a setting. If it's a provider-specific setting, update both flat & nested.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updateSetting = (key: keyof Settings, value: any) => {
+        if (!settings) return;
+
+        // Initialize nested object if missing (defensive)
+        const currentProviderSettings = settings.providerSettings || {};
+        const activeProviderConfig = currentProviderSettings[settings.provider] || { apiKey: '', model: '', baseUrl: '' };
+
+        let newSettings = { ...settings, [key]: value };
+
+        // If updating a provider-specific field (apiKey, model, baseUrl), also sync it to providerSettings
+        if (['apiKey', 'model', 'baseUrl'].includes(key)) {
+            newSettings.providerSettings = {
+                ...currentProviderSettings,
+                [settings.provider]: {
+                    ...activeProviderConfig,
+                    [key]: value
+                }
+            };
+        }
+
+        setSettings(newSettings);
+    };
+
+    const handleProviderChange = (providerId: string) => {
+        if (!settings) return;
+
+        // 1. Save current input values to the OLD provider's slot before switching
+        const oldProvider = settings.provider;
+        const updatedProviderSettings = {
+            ...settings.providerSettings,
+            [oldProvider]: {
+                apiKey: settings.apiKey,
+                model: settings.model,
+                baseUrl: settings.baseUrl
+            }
+        };
+
+        // 2. Load values for the NEW provider
+        const newProviderConfig = updatedProviderSettings[providerId] || { apiKey: '', model: '', baseUrl: '' };
+
+        // 3. Find default if not set? (Already handled by storage migration defaults, but good to be safe)
+        const providerMeta = PROVIDERS.find(p => p.id === providerId);
+
+        setSettings({
+            ...settings,
+            provider: providerId,
+            providerSettings: updatedProviderSettings, // Save the old one
+            // Set flat fields to new provider's values
+            apiKey: newProviderConfig.apiKey,
+            model: newProviderConfig.model || providerMeta?.defaultModel || '',
+            baseUrl: newProviderConfig.baseUrl || providerMeta?.baseUrl || ''
+        });
     };
 
     if (!settings) return <div className="p-4 text-center">Loading settings...</div>;
@@ -52,6 +122,51 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
     return (
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-6">
             <h2 className="text-lg font-bold">Settings</h2>
+
+            {/* General Settings */}
+            <div className="space-y-4 pb-4 border-b border-gray-100 dark:border-gray-800">
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">General</h3>
+                {/* Context Toggle */}
+                <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                        <span className="text-sm font-medium flex items-center gap-2">
+                            Allow Page Content Access
+                        </span>
+                        <span className="text-xs text-gray-500">Allow AI to read current page</span>
+                    </div>
+                    <button
+                        onClick={async () => {
+                            const newEnabled = !settings.enableContext;
+                            if (newEnabled) {
+                                // Request Broad Permission
+                                try {
+                                    const granted = await chrome.permissions.request({
+                                        origins: ['<all_urls>']
+                                    });
+                                    if (granted) {
+                                        setSettings({ ...settings, enableContext: true });
+                                    } else {
+                                        // User denied
+                                        alert("Permission to read all pages was denied. Context features will be limited.");
+                                        // Still enable? No, keep disabled.
+                                    }
+                                } catch (e) {
+                                    console.error("Permission request failed:", e);
+                                    // Fallback for dev mode or if request fails
+                                    setSettings({ ...settings, enableContext: true });
+                                }
+                            } else {
+                                // Disable
+                                setSettings({ ...settings, enableContext: false });
+                                // Optional: Remove permission? No need.
+                            }
+                        }}
+                        className={`w-10 h-5 rounded-full relative transition-colors ${settings.enableContext ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+                    >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${settings.enableContext ? 'left-6' : 'left-1'}`} />
+                    </button>
+                </div>
+            </div>
 
             {/* Provider Selector */}
             <div className="flex flex-col gap-2">
@@ -81,7 +196,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                     className="p-2 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                     placeholder="sk-..."
                     value={settings.apiKey}
-                    onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                    onChange={(e) => updateSetting('apiKey', e.target.value)}
                 />
                 <p className="text-xs text-gray-500">
                     Your key is stored locally in your browser.
@@ -99,7 +214,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                     className="p-2 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 outline-none"
                     placeholder="https://api.openai.com/v1"
                     value={settings.baseUrl || ''}
-                    onChange={(e) => setSettings({ ...settings, baseUrl: e.target.value })}
+                    onChange={(e) => updateSetting('baseUrl', e.target.value)}
                 />
                 <p className="text-xs text-gray-500">
                     Defaults to https://api.openai.com/v1 if empty.
@@ -117,7 +232,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                     className="p-2 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 outline-none"
                     placeholder={settings.provider === 'vivgrid' ? 'Optional for Vivgrid' : 'gpt-4o'}
                     value={settings.model}
-                    onChange={(e) => setSettings({ ...settings, model: e.target.value })}
+                    onChange={(e) => updateSetting('model', e.target.value)}
                 />
                 {/* Helper text for presets if useful, but simple input is versatile */}
             </div>
@@ -135,7 +250,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                     step="0.1"
                     className="accent-blue-600"
                     value={settings.temperature}
-                    onChange={(e) => setSettings({ ...settings, temperature: parseFloat(e.target.value) })}
+                    onChange={(e) => updateSetting('temperature', parseFloat(e.target.value))}
                 />
                 <div className="flex justify-between text-xs text-gray-500">
                     <span>Precise (0.0)</span>
@@ -151,7 +266,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                 <div className="space-y-2">
                     {settings.mcpServers && settings.mcpServers.map((server, idx) => (
                         <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-300 transition-all">
-                            {/* Status Dot (Mocked for now, implies enabled=connected logic roughly via sync) */}
+                            {/* Status Dot */}
                             <div
                                 className={`w-2 h-2 rounded-full ${server.enabled ? 'bg-green-500' : 'bg-gray-400'}`}
                                 title={server.enabled ? "Enabled" : "Disabled"}
@@ -164,6 +279,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                             {/* Toggle */}
                             <button
                                 onClick={() => {
+                                    if (!settings) return;
                                     const newServers = [...settings.mcpServers];
                                     newServers[idx].enabled = !newServers[idx].enabled;
                                     setSettings({ ...settings, mcpServers: newServers });
@@ -179,6 +295,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                             {/* Delete */}
                             <button
                                 onClick={() => {
+                                    if (!settings) return;
                                     const newServers = settings.mcpServers.filter((_, i) => i !== idx);
                                     setSettings({ ...settings, mcpServers: newServers });
                                 }}
@@ -208,9 +325,34 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                         />
                         <button
                             disabled={!newServerUrl.trim()}
-                            onClick={() => {
-                                if (!newServerUrl.trim()) return;
-                                const newServers = [...(settings.mcpServers || []), { url: newServerUrl.trim(), enabled: true }];
+                            onClick={async () => {
+                                if (!settings || !newServerUrl.trim()) return;
+
+                                const urlStr = newServerUrl.trim();
+                                // Try to request permission
+                                try {
+                                    const urlObj = new URL(urlStr);
+                                    const origin = `${urlObj.protocol}//${urlObj.hostname}/*`;
+                                    // Handle custom ports
+                                    const originWithPort = urlObj.port ? `${urlObj.protocol}//${urlObj.hostname}:${urlObj.port}/*` : origin;
+
+                                    const granted = await chrome.permissions.request({
+                                        origins: [originWithPort]
+                                    });
+
+                                    if (!granted) {
+                                        alert("Permission to access this server was denied. The extension may not be able to connect.");
+                                        // We might still add it, or block. 
+                                        // Let's block it to ensure user knows it won't work.
+                                        return;
+                                    }
+                                } catch (e) {
+                                    console.error("Invalid URL or Permission Error", e);
+                                    alert("Invalid URL or unable to request permission.");
+                                    return;
+                                }
+
+                                const newServers = [...(settings.mcpServers || []), { url: urlStr, enabled: true }];
                                 setSettings({ ...settings, mcpServers: newServers });
                                 setNewServerUrl('');
                             }}
@@ -218,6 +360,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                         >
                             Add
                         </button>
+
                     </div>
                 </div>
             </div>

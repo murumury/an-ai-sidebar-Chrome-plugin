@@ -6,6 +6,7 @@ interface ConnectedClient {
     client: Client;
     transport: SSEClientTransport;
     status: 'connecting' | 'connected' | 'error';
+    connectPromise?: Promise<void>;
 }
 
 export class McpService {
@@ -21,7 +22,11 @@ export class McpService {
         if (this.clientMap.has(url)) {
             const existing = this.clientMap.get(url);
             if (existing?.status === 'connected') return;
-            // If connecting or error, maybe retry? For now, disconnect first if exists
+            // If connecting, return existing promise to avoid double-connect
+            if (existing?.status === 'connecting' && existing.connectPromise) {
+                return existing.connectPromise;
+            }
+            // If error, disconnect first
             await this.disconnect(url);
         }
 
@@ -37,19 +42,29 @@ export class McpService {
             }
         );
 
-        this.clientMap.set(url, { client, transport, status: 'connecting' });
+        // Create connection promise
+        const connectPromise = (async () => {
+            try {
+                await client.connect(transport);
+                const entry = this.clientMap.get(url);
+                if (entry) {
+                    entry.status = 'connected';
+                    entry.connectPromise = undefined; // Clear promise when done
+                }
+                console.log(`MCP: Connected to ${url}`);
+            } catch (err) {
+                console.error(`MCP: Failed to connect to ${url}`, err);
+                const entry = this.clientMap.get(url);
+                if (entry) {
+                    entry.status = 'error';
+                    entry.connectPromise = undefined;
+                }
+                // Do not throw here, let the promise resolve (failed state handled by status)
+            }
+        })();
 
-        try {
-            await client.connect(transport);
-            const entry = this.clientMap.get(url);
-            if (entry) entry.status = 'connected';
-            console.log(`MCP: Connected to ${url}`);
-        } catch (err) {
-            console.error(`MCP: Failed to connect to ${url}`, err);
-            const entry = this.clientMap.get(url);
-            if (entry) entry.status = 'error';
-            throw err;
-        }
+        this.clientMap.set(url, { client, transport, status: 'connecting', connectPromise });
+        return connectPromise;
     }
 
     async disconnect(url: string) {
@@ -70,9 +85,10 @@ export class McpService {
         const enabledUrls = new Set(configs.filter(c => c.enabled).map(c => c.url));
 
         // Connect new/enabled
+        const connectPromises = [];
         for (const url of enabledUrls) {
             if (!this.clientMap.has(url) || this.clientMap.get(url)?.status !== 'connected') {
-                this.connect(url).catch(err => console.error("Auto-connect failed for", url, err));
+                connectPromises.push(this.connect(url));
             }
         }
 
@@ -82,11 +98,28 @@ export class McpService {
                 await this.disconnect(url);
             }
         }
+
+        // Note: We don't await connectPromises here to keep sync fast, 
+        // but listTools will wait for them.
     }
 
     private toolRouter = new Map<string, string>(); // toolName -> serverUrl
 
     async listTools() {
+        // Wait for any pending connections (with timeout)
+        const pendingPromises = [];
+        for (const [, entry] of this.clientMap) {
+            if (entry.status === 'connecting' && entry.connectPromise) {
+                pendingPromises.push(entry.connectPromise);
+            }
+        }
+
+        if (pendingPromises.length > 0) {
+            // Wait up to 2 seconds for connections
+            const timeout = new Promise(resolve => setTimeout(resolve, 2000));
+            await Promise.race([Promise.all(pendingPromises), timeout]);
+        }
+
         const allTools = [];
         this.toolRouter.clear();
         for (const [url, entry] of this.clientMap) {

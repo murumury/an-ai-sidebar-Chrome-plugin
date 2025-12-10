@@ -8,10 +8,11 @@ import { useChat } from '@ai-sdk/react';
 import { Bot } from 'lucide-react';
 // import { mockChatStream } from './lib/api'; // Disabling mock
 import type { ChatSession, StoredMessage } from './lib/storage';
-import { getActiveSessionId, setActiveSessionId, getSession, saveSession, getSessions, getSettings, deleteSession, clearAllSessions } from './lib/storage';
+import { getActiveSessionId, setActiveSessionId, getSession, saveSession, getSessions, getSettings, saveSettings, deleteSession, clearAllSessions } from './lib/storage';
 import { mcpService } from './lib/mcp';
 import { runLLMStream } from './lib/llm';
-import type { LLMMessage } from './lib/llm';
+
+
 
 // Markdown Dependencies moved to ChatMessage
 import 'highlight.js/styles/github-dark.css'; // Keep this for global styles if needed, or move to ChatMessage
@@ -25,7 +26,7 @@ interface PageContext {
 
 function App() {
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
-  const [contextEnabled, setContextEnabled] = useState(true);
+
 
   // App State
   const [view, setView] = useState<'chat' | 'history' | 'settings'>('chat');
@@ -34,16 +35,69 @@ function App() {
   const tabIdRef = useRef<number | null>(null);
 
   const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false); // Track streaming state
 
   // Initialize useChat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { messages: rawMessages, setMessages } = useChat({
-    onError: (err) => console.error("Chat error:", err),
+    onError: (err) => {
+      console.error("Chat error:", err);
+      setIsStreaming(false);
+    },
+    onFinish: () => setIsStreaming(false)
   });
 
   // Normalize messages
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages = rawMessages as any[];
+
+  // Dark Mode Auto-Detection
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => {
+      if (mediaQuery.matches) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    };
+
+    // Initial check
+    handleChange();
+
+    // Listener
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // 2. Persist Messages whenever they change
+  useEffect(() => {
+    if (!sessionId || messages.length === 0) return;
+
+    const saveToStorage = async () => {
+      // optimization: Only save if there is at least one USER message
+      const hasUserMessage = messages.some((m: any) => m.role === 'user');
+      if (!hasUserMessage) return;
+
+      let title = 'Untitled Chat';
+      const firstUserMsg = messages.find((m: any) => m.role === 'user');
+      if (firstUserMsg) {
+        title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
+      }
+
+      const session: ChatSession = {
+        id: sessionId,
+        title,
+        updatedAt: Date.now(),
+        messages: messages as StoredMessage[]
+      };
+
+      await saveSession(session);
+    };
+
+    const timeout = setTimeout(saveToStorage, 1000);
+    return () => clearTimeout(timeout);
+  }, [messages, sessionId]);
 
   // Dark Mode Auto-Detection
   useEffect(() => {
@@ -74,14 +128,14 @@ function App() {
     const loadSessionForTab = async (tabId: number) => {
       tabIdRef.current = tabId;
 
-      // 1. Get Context
-      chrome.tabs.sendMessage(tabId, { action: 'GET_PAGE_CONTENT' }, (response: any) => {
-        if (!chrome.runtime.lastError && response) {
-          setPageContext(response);
-        } else {
-          setPageContext(null);
-        }
-      });
+      // 1. Get Context (Dynamic Injection)
+      const settings = await getSettings();
+      console.log("Loading Session for Tab:", tabId, "Enable Context:", settings.enableContext);
+      if (settings.enableContext) {
+        fetchPageContext(tabId);
+      } else {
+        setPageContext(null);
+      }
 
       // 2. Load Session
       const activeSessionId = await getActiveSessionId(tabId);
@@ -105,6 +159,7 @@ function App() {
 
       // Load and Connect MCP
       const settings = await getSettings();
+      // ... settings loading ...
       if (settings.mcpServers) {
         mcpService.syncServers(settings.mcpServers).catch(err => console.error("MCP Sync Error:", err));
       }
@@ -117,20 +172,74 @@ function App() {
 
     // Listener for Tab Updates (Refresh/Navigation) to update Context
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleTabUpdated = (tabId: number, changeInfo: any) => {
+    const handleTabUpdated = async (tabId: number, changeInfo: any) => {
       // We only care if the page finished loading ('complete') and it's our active tab
       if (tabId === tabIdRef.current && changeInfo.status === 'complete') {
-        // Re-fetch context
+        const settings = await getSettings();
+        console.log("Tab Updated:", tabId, "Enable Context:", settings.enableContext);
+        if (settings.enableContext) {
+          fetchPageContext(tabId);
+        } else {
+          console.log("Context disabled in settings, skipping fetch.");
+          setPageContext(null);
+        }
+      }
+    };
+
+    const fetchPageContext = async (tabId: number) => {
+      try {
+        console.log("Attempting to inject script into tab:", tabId);
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ['content.js']
+        });
+        console.log("Script injected. Sending GET_PAGE_CONTENT...");
+
         chrome.tabs.sendMessage(tabId, { action: 'GET_PAGE_CONTENT' }, (response: any) => {
-          if (!chrome.runtime.lastError && response) {
+          if (chrome.runtime.lastError) {
+            console.error("Message passing error:", chrome.runtime.lastError.message);
+            setPageContext(null);
+            return;
+          }
+          console.log("Context Response:", response);
+          if (response) {
             setPageContext(response);
+          } else {
+            console.warn("No response from content script.");
+            setPageContext(null);
           }
         });
+      } catch (err) {
+        console.error("Context fetch failed (injection error?):", err);
+        setPageContext(null);
       }
     };
 
     chrome.tabs.onActivated.addListener(handleTabActivated);
     chrome.tabs.onUpdated.addListener(handleTabUpdated);
+
+    // Listener for Settings Changes to Sync MCP immediately
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+      if (areaName === 'local' && changes['user_settings']) {
+        const newSettings = changes['user_settings'].newValue as any;
+
+        // Sync MCP
+        if (newSettings?.mcpServers) {
+          console.log("Settings changed, syncing MCP servers...");
+          mcpService.syncServers(newSettings.mcpServers).catch(err => console.error("MCP Sync Error:", err));
+        }
+
+        // Sync Context (If enableContext changed)
+        const oldSettings = changes['user_settings'].oldValue as any;
+        if (newSettings?.enableContext !== oldSettings?.enableContext) {
+          if (tabIdRef.current) {
+            // Re-run session load/context fetch
+            loadSessionForTab(tabIdRef.current);
+          }
+        }
+      }
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
 
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -140,6 +249,7 @@ function App() {
       if (chrome.tabs.onUpdated.hasListener(handleTabUpdated)) {
         chrome.tabs.onUpdated.removeListener(handleTabUpdated);
       }
+      chrome.storage.onChanged.removeListener(handleStorageChange);
     };
   }, []);
 
@@ -148,6 +258,10 @@ function App() {
     if (!sessionId || messages.length === 0) return;
 
     const saveToStorage = async () => {
+      // optimization: Only save if there is at least one USER message
+      const hasUserMessage = messages.some((m: any) => m.role === 'user');
+      if (!hasUserMessage) return;
+
       let title = 'Untitled Chat';
       const firstUserMsg = messages.find((m: any) => m.role === 'user');
       if (firstUserMsg) {
@@ -217,17 +331,17 @@ function App() {
   };
 
   // Helper: Trigger LLM with current messages
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   // Helper: Trigger LLM with current messages
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const generateAIResponse = async (initialHistory: any[]) => {
+    setIsStreaming(true);
     // We'll maintain a local history for this turn
     let currentHistory = [...initialHistory];
 
     // Create a placeholder for the INITIAL AI response (streaming)
     const aiMessageId = (Date.now() + 1).toString();
     const placeholder = { id: aiMessageId, role: 'assistant', content: '' };
-    // Update UI immediately
+    // Update UI immediately (append placeholder)
     setMessages([...currentHistory, placeholder] as any[]);
 
     try {
@@ -244,132 +358,177 @@ function App() {
         }
       }));
 
-      // Loop for multi-step tool calls (Max 5 turns to prevent infinite loops)
+      // Loop for multi-step tool calls (Max 25 turns)
       let turnCount = 0;
-      const MAX_TURNS = 5;
+      const MAX_TURNS = 25;
 
       while (turnCount < MAX_TURNS) {
         turnCount++;
 
-        // Prepare context for LLM
-        let apiMessages: LLMMessage[] = currentHistory.map((m: any) => ({
-          role: m.role as any,
-          content: m.content || null,
-          tool_calls: m.tool_calls,
-          tool_call_id: m.tool_call_id,
-          name: m.name
-        }));
+        // Prepare args for LLM
+        // Prepare args for LLM
+        // 1. Global System Message
+        const systemPrompt = "You are AgentDock, a Chrome extension AI assistant. You can read the current page's information if the user allows it, and you support using MCP tools provided by the user. When the user asks about the current page's content, prioritize using the 'Current Page Context' provided to you.";
 
-        if (contextEnabled && pageContext) {
-          const systemMsg: LLMMessage = {
+        let messagesForLLM = [
+          { role: 'system', content: systemPrompt },
+          ...currentHistory
+        ];
+
+        // 2. Inject Context if available (as a separate system message or appended)
+        if (pageContext) {
+          const contextMsg = {
             role: 'system',
-            content: `You are a helpful assistant. \n\nContext from current page "${pageContext.title}":\n${pageContext.content.slice(0, 8000)}`,
-            tool_calls: undefined,
+            content: `Current Page Context (Use this to answer questions about the page):\nTitle: ${pageContext.title}\nURL: ${pageContext.url}\nContent:\n${pageContext.content}`
           };
-          apiMessages = [systemMsg, ...apiMessages];
+          // Append context message after global system prompt but before history? 
+          // Or just append to the list. Most LLMs handle multiple system messages or we can merge.
+          // Let's insert it as the second message.
+          messagesForLLM.splice(1, 0, contextMsg);
         }
 
-        // Stream Response
-        let currentContent = '';
-        const finalMessage = await runLLMStream(
-          apiMessages,
-          settings,
-          (chunk) => {
-            // Only update the LAST assistant message if it's the one currently streaming
-            // If we are in a tool loop, the UI should show the accumulated history
-            // We mainly want to stream the "text" part of the *current* assistant turn
-            currentContent += chunk;
+        // WORKAROUND: Vivgrid Server System Prompt Overwrite
+        // If provider is 'vivgrid', convert all 'system' messages to 'user' messages
+        // so they are not overwritten/prefixed weirdly by the server.
+        if (settings.provider === 'vivgrid') {
+          messagesForLLM = messagesForLLM.map(m => {
+            if (m.role === 'system') {
+              return { ...m, role: 'user', content: `[SYSTEM INSTRUCTION]\n${m.content}` };
+            }
+            return m;
+          });
+        }
 
-            // Update the last message in UI
-            // Note: This simple logic assumes the last message in currentHistory is the one being streamed
-            // But in tool loops, we might be appending new messages.
-            // Actually, for the initial turn, the placeholder is there.
-            // For subsequent turns, we might need to add a new placeholder.
+        // runLLMStream expects standard messages.
+        // We'll collect the stored text chunks here for the UI update
+        let fullContent = '';
+        let fullReasoning = ''; // Accumulate reasoning
+        let toolCalls: any[] = [];
+        let currentToolCall: any = null;
 
-            // Let's refine: The UI state `messages` should reflect `currentHistory` + `currently streaming content`
-            // BUT `currentHistory` doesn't contain the message being generated yet.
+        // Run LLM
+        // Note: runLLMStream is now a generator
+        const stream = runLLMStream(messagesForLLM as any, settings, tools); // Fixed args order
 
-            // We can construct the "Full UI" messages list:
+        for await (const chunk of stream) {
+          // Chunk types: 'content' | 'reasoning' | 'tool_call_start' | 'tool_call_delta'
 
-            // Simplified UI update: Just update the very last message of the "global" state? 
-            // Problem: `setMessages` overwrites.
-
-            // Strategy: Update local variable `currentContent` and force refresh UI
-            // We'll append the *currently generating* message to `currentHistory` temporarily for UI render
-
-            // Actually, let's keep it simple:
-            // We will add the "Assistant" message to `currentHistory` ONLY after it finishes.
-            // WHILE streaming, we merge it.
-
-            const streamMsg = {
-              id: `gen-${turnCount}`,
-              role: 'assistant',
-              content: currentContent
+          if (chunk.type === 'content') {
+            fullContent += chunk.content;
+            // Update UI live
+            // We find the LAST message (which is our placeholder/current AI msg) and update it
+            setMessages((prev: any[]) => {
+              const newMsgs = [...prev];
+              const last = newMsgs[newMsgs.length - 1];
+              if (last.role === 'assistant') {
+                last.content = fullContent;
+              }
+              return newMsgs;
+            });
+          } else if (chunk.type === 'reasoning') {
+            fullReasoning += chunk.content;
+            setMessages((prev: any[]) => {
+              const newMsgs = [...prev];
+              const last = newMsgs[newMsgs.length - 1];
+              if (last.role === 'assistant') {
+                last.reasoning_content = fullReasoning; // Update live UI
+              }
+              return newMsgs;
+            });
+          } else if (chunk.type === 'tool_call_start') {
+            // Push previous if exists?
+            if (currentToolCall) {
+              toolCalls.push(currentToolCall);
+            }
+            currentToolCall = {
+              id: chunk.toolCallId,
+              name: chunk.name,
+              arguments: ''
             };
-            setMessages([...currentHistory, streamMsg] as any[]);
-          },
-          tools.length > 0 ? tools : undefined
-        );
+          } else if (chunk.type === 'tool_call_delta') {
+            if (currentToolCall) {
+              currentToolCall.arguments += chunk.args;
+            }
+          }
+        }
 
-        // Turn Finished. 
-        // 1. Add the Assistant Message (with content AND tool_calls) to history
-        const assistantMsgForHistory = {
+        // Push the last tool call if exists
+        if (currentToolCall) {
+          toolCalls.push(currentToolCall);
+          currentToolCall = null; // Reset
+        }
+
+        // ONE Turn finished (LLM stopped generating).
+        // 1. Update history with the AI's final message (content + tool_calls + reasoning)
+        const assistantMsg: any = {
           role: 'assistant',
-          content: finalMessage.content,
-          tool_calls: finalMessage.tool_calls
+          content: fullContent
         };
-        // @ts-ignore
-        currentHistory.push(assistantMsgForHistory);
 
-        // Update UI to show this "committed" state (e.g. text + maybe hidden tool calls)
+        if (fullReasoning) {
+          assistantMsg.reasoning_content = fullReasoning;
+        }
+
+        // Only append tool_calls if we have them
+        if (toolCalls.length > 0) {
+          assistantMsg.tool_calls = toolCalls.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.name, arguments: tc.arguments }
+          }));
+        }
+
+        currentHistory.push(assistantMsg);
         setMessages([...currentHistory] as any[]);
 
-        // 2. Check for Tool Calls
-        if (finalMessage.tool_calls && finalMessage.tool_calls.length > 0) {
-          console.log("Detected Tool Calls:", finalMessage.tool_calls);
-
-          // Execute Tools
-          for (const tc of finalMessage.tool_calls) {
-            const toolName = tc.function.name;
-            const argsStr = tc.function.arguments;
-            let args = {};
-            try { args = JSON.parse(argsStr); } catch (e) { console.error("JSON Parse error for tool args", e); }
-
-            // UI Feedback: "Running tool..." (Maybe append a temporary system msg? or just let user wait)
-            // Let's append a visual "Tool" message? 
-            // ChatMessage component doesn't handle 'tool' role visually well yet, but we can try.
-            // Ideally, we want to show "Used tool: X" like ChatGPT.
-
-            // Execute
-            let result = "Error executing tool";
-            try {
-              const res = await mcpService.callTool(toolName, args);
-              result = JSON.stringify(res);
-            } catch (e: any) {
-              result = `Error: ${e.message}`;
-            }
-
-            // Append Tool Result to History
-            currentHistory.push({
-              role: 'tool',
-              tool_call_id: tc.id,
-              name: toolName,
-              content: result
-            } as any);
-          }
-
-          // Update UI again to show tool results (if we wanted to show them, currently ChatMessage might ignore 'tool' role which is good/hidden)
-          // We continue the loop -> Run LLM again with "Tool Results" in history
-        } else {
-          // No tool calls -> Final response. Break.
+        // 2. Check if we have tool calls to execute
+        if (toolCalls.length === 0) {
           break;
         }
+
+        // 3. Execute Tools
+        for (const tc of toolCalls) {
+          // A. Push "Loading" Tool Message
+          const toolMsg: any = {
+            role: 'tool',
+            tool_call_id: tc.id,
+            name: tc.name, // Custom prop for UI display
+            content: ''    // Empty initially
+          };
+          currentHistory.push(toolMsg);
+          // Update UI to show "Using Tool..."
+          setMessages([...currentHistory] as any[]);
+
+          let resultString = '';
+          try {
+            const args = JSON.parse(tc.arguments || '{}');
+            // Cast result content to avoid 'unknown' error
+            const result = await mcpService.callTool(tc.name, args);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            resultString = (result.content as any[]).map((c: any) => c.type === 'text' ? c.text : '').join('\n'); // Fix TS errors
+            if (result.isError) {
+              resultString = `Error: ${resultString}`;
+            }
+          } catch (err: any) {
+            resultString = `Error executing tool: ${err.message}`;
+          }
+
+          // B. Update Content
+          toolMsg.content = resultString;
+          // Update UI with result
+          setMessages([...currentHistory] as any[]);
+        }
+
+        // 4. LOOP -> The 'while' continues, feeding the new history (AI msg + Tool results) back to LLM.
       }
 
     } catch (err: any) {
       console.error(err);
       const errorMessage = err.message || "An error occurred.";
-      setMessages([...currentHistory, { id: 'error', role: 'assistant', content: `Error: ${errorMessage}` }] as any[]);
+      // If we failed, append error message
+      setMessages((prev: any[]) => [...prev, { id: 'error', role: 'assistant', content: `Error: ${errorMessage}` }]);
+    } finally {
+      setIsStreaming(false);
     }
   };
 
@@ -461,7 +620,7 @@ function App() {
         ) : (
           <>
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto scroll-smooth pb-32">
+            <div className="flex-1 overflow-y-auto scroll-smooth pb-48">
               {messages.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center text-gray-400">
                   <div className="bg-white/10 p-4 rounded-full mb-4">
@@ -470,16 +629,32 @@ function App() {
                   <p className="text-lg font-medium">How can I help you today?</p>
                 </div>
               )}
-              {messages.map((m: any) => (
-                <ChatMessage
-                  key={m.id}
-                  id={m.id}
-                  role={m.role}
-                  content={m.content}
-                  onRetry={handleRetry}
-                  onEdit={handleEdit}
-                />
-              ))}
+              {messages.map((m: any, index: number) => {
+                const isLast = index === messages.length - 1;
+                // Show border if:
+                // 1. User message (always has border)
+                // 2. Last message (bottom of chat)
+                // 3. Next message is User (separation)
+                // 4. (Implicitly) If next is tool/assistant, NO border (merge visually)
+                const nextMsg = messages[index + 1];
+                const showBorder = m.role === 'user' || isLast || (nextMsg && nextMsg.role === 'user');
+
+                return (
+                  <ChatMessage
+                    key={m.id}
+                    id={m.id}
+                    role={m.role}
+                    content={m.content}
+                    reasoning={m.reasoning_content}
+                    toolName={m.name}
+                    onRetry={handleRetry}
+                    onEdit={handleEdit}
+                    isStreaming={isStreaming && isLast}
+                    isLast={isLast}
+                    showBorder={showBorder}
+                  />
+                );
+              })}
             </div>
 
             {/* Input Area (Fixed Overlay) */}
@@ -489,8 +664,29 @@ function App() {
                 onChange={handleInputChange}
                 onSubmit={manualSubmit}
                 pageTitle={pageContext?.title}
-                contextEnabled={contextEnabled}
-                onToggleContext={() => setContextEnabled(!contextEnabled)}
+                contextEnabled={!!pageContext} // If we have context, it is enabled.
+                onToggleContext={() => {
+                  // Optional: Allow temporary disable? For now, just link to settings or toggle settings?
+                  // If user clicks this, maybe they want to DISABLE it?
+                  // Let's make it toggle the setting for now for better UX
+                  // Toggle from UI needs permission request too if enabling
+                  getSettings().then(async s => {
+                    const newEnabled = !s.enableContext;
+                    if (newEnabled) {
+                      try {
+                        const granted = await chrome.permissions.request({ origins: ['<all_urls>'] });
+                        if (granted) {
+                          saveSettings({ ...s, enableContext: true });
+                        }
+                      } catch (e) {
+                        console.error("Permission request error:", e);
+                        saveSettings({ ...s, enableContext: true });
+                      }
+                    } else {
+                      saveSettings({ ...s, enableContext: false });
+                    }
+                  });
+                }}
               />
             </div>
           </>

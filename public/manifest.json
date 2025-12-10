@@ -1,20 +1,19 @@
 {
     "manifest_version": 3,
-    "name": "AI Sidebar",
+    "name": "AgentDock",
     "version": "1.0.0",
-    "description": "AI Sidebar with context awareness",
+    "description": "AgentDock: Your AI-powered research and chat assistant.",
     "permissions": [
         "sidePanel",
-        "storage"
-    ],
-    "host_permissions": [
-        "<all_urls>"
+        "storage",
+        "activeTab",
+        "scripting"
     ],
     "side_panel": {
         "default_path": "index.html"
     },
     "action": {
-        "default_title": "Open AI Sidebar"
+        "default_title": "Open AgentDock"
     },
     "icons": {
         "16": "icon.png",
@@ -24,15 +23,7 @@
     "background": {
         "service_worker": "service-worker.js"
     },
-    "content_scripts": [
-        {
-            "matches": [
-                "<all_urls>"
-            ],
-            "js": [
-                "content.js"
-            ],
-            "run_at": "document_idle"
-        }
+    "optional_host_permissions": [
+        "<all_urls>"
     ]
 }

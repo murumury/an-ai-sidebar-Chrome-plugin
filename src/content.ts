@@ -23,4 +23,4 @@ chrome.runtime.onMessage.addListener((request: any, _sender: chrome.runtime.Mess
     return true; // Keep channel open for async response
 });
 
-console.log('AI Sidebar Content Script Loaded');
+console.log('AgentDock Content Script Loaded');

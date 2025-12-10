@@ -23,9 +23,6 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
-            if (e.nativeEvent.isComposing) {
-                return;
-            }
             e.preventDefault();
             onSubmit(e);
         }
@@ -70,7 +67,7 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
                 </button>
             </div>
             <div className="text-center text-[10px] text-gray-400 mt-2">
-                AI Sidebar can make mistakes. Check important info.
+                AgentDock can make mistakes. Check important info.
             </div>
         </div>
     );
