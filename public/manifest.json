@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "AgentDock",
-    "version": "1.0.0",
-    "description": "AgentDock: Your AI-powered research and chat assistant.",
+    "name": "SideAgent",
+    "version": "1.1.0",
+    "description": "Sidebar AI Assistant with MCP Client",
     "permissions": [
         "sidePanel",
         "storage",
@@ -13,7 +13,7 @@
         "default_path": "index.html"
     },
     "action": {
-        "default_title": "Open AgentDock"
+        "default_title": "Open SideAgent"
     },
     "icons": {
         "16": "icon.png",

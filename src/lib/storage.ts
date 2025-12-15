@@ -107,7 +107,7 @@ const DEFAULT_PROVIDER_SETTINGS: Record<string, ProviderConfig> = {
     vivgrid: { apiKey: '', model: 'default', baseUrl: 'https://api.vivgrid.com/v1' },
     anthropic: { apiKey: '', model: 'claude-3-opus-20240229', baseUrl: 'https://api.anthropic.com/v1' },
     google: { apiKey: '', model: 'gemini-1.5-pro', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' },
-    deepseek: { apiKey: '', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com' },
+    deepseek: { apiKey: '', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' },
     grok: { apiKey: '', model: 'grok-beta', baseUrl: 'https://api.x.ai/v1' },
     custom: { apiKey: '', model: '', baseUrl: '' },
 };

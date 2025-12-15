@@ -1,6 +1,7 @@
-# AgentDock (Chrome Extension)
+# SideAgent (Chrome Extension)
 
-A powerful, context-aware AI Sidebar for Chrome that allows you to chat with your current web page using various AI providers.
+SideAgent: Sidebar AI Assistant with MCP Client.
+
 
 ## Features
 
@@ -99,7 +100,7 @@ Once Ollama is running:
 
 ## 🚀 Vivgrid Integration (Optional)
 
-You can enhance AgentDock with **Vivgrid** for geo-distributed inference and serverless MCP tools.
+You can enhance SideAgent with **Vivgrid** for geo-distributed inference and serverless MCP tools.
 
 ### 1. As an LLM Provider
 Use Vivgrid's high-performance inference backend:

@@ -1,7 +1,7 @@
 {
-  "name": "agent-dock-extension",
+  "name": "side-agent-extension",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

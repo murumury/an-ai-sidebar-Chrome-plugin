@@ -152,7 +152,7 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
         <div className={cn(
             "group w-full text-gray-800 dark:text-gray-100",
             // For AI (assistant) AND Tool, keep the full-width background. For User, transparent background.
-            !isUser && "bg-gray-50 dark:bg-[#444654]",
+            !isUser && "bg-transparent",
             // Apply border only if showBorder is true (default true, but App passes logic)
             showBorder && "border-b border-black/5 dark:border-white/5"
         )}>
@@ -267,7 +267,7 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
 
                         {/* Action Buttons (Inside for AI - Only for Assistant messages usually, or if we want them for tools?) */}
                         {/* Users usually don't retry tools separately, so only show for assistant role */}
-                        {role === 'assistant' && content && !isStreaming && isLast && (
+                        {role === 'assistant' && content && !isStreaming && isLast && id !== 'welcome' && (
                             <div className="flex items-center gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400">
                                 <button onClick={handleCopy} className="flex items-center gap-1 hover:text-gray-600 dark:hover:text-gray-300 text-xs" title="Copy Message">
                                     {copied ? <Check size={14} /> : <Copy size={14} />}

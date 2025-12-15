@@ -26,6 +26,8 @@ interface PageContext {
 
 function App() {
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [isContextEnabled, setIsContextEnabled] = useState(false);
+  const [isWarningDismissed, setIsWarningDismissed] = useState(false);
 
 
   // App State
@@ -127,10 +129,13 @@ function App() {
 
     const loadSessionForTab = async (tabId: number) => {
       tabIdRef.current = tabId;
+      setIsWarningDismissed(false); // Reset dismissal on tab load
+
 
       // 1. Get Context (Dynamic Injection)
       const settings = await getSettings();
       console.log("Loading Session for Tab:", tabId, "Enable Context:", settings.enableContext);
+      setIsContextEnabled(settings.enableContext);
       if (settings.enableContext) {
         fetchPageContext(tabId);
       } else {
@@ -159,6 +164,7 @@ function App() {
 
       // Load and Connect MCP
       const settings = await getSettings();
+      setIsContextEnabled(settings.enableContext);
       // ... settings loading ...
       if (settings.mcpServers) {
         mcpService.syncServers(settings.mcpServers).catch(err => console.error("MCP Sync Error:", err));
@@ -175,8 +181,10 @@ function App() {
     const handleTabUpdated = async (tabId: number, changeInfo: any) => {
       // We only care if the page finished loading ('complete') and it's our active tab
       if (tabId === tabIdRef.current && changeInfo.status === 'complete') {
+        setIsWarningDismissed(false); // Reset dismissal on page refresh/update
         const settings = await getSettings();
         console.log("Tab Updated:", tabId, "Enable Context:", settings.enableContext);
+        setIsContextEnabled(settings.enableContext);
         if (settings.enableContext) {
           fetchPageContext(tabId);
         } else {
@@ -232,6 +240,7 @@ function App() {
         // Sync Context (If enableContext changed)
         const oldSettings = changes['user_settings'].oldValue as any;
         if (newSettings?.enableContext !== oldSettings?.enableContext) {
+          setIsContextEnabled(!!newSettings?.enableContext);
           if (tabIdRef.current) {
             // Re-run session load/context fetch
             loadSessionForTab(tabIdRef.current);
@@ -263,9 +272,9 @@ function App() {
       if (!hasUserMessage) return;
 
       let title = 'Untitled Chat';
-      const firstUserMsg = messages.find((m: any) => m.role === 'user');
-      if (firstUserMsg) {
-        title = firstUserMsg.content.slice(0, 30) + (firstUserMsg.content.length > 30 ? '...' : '');
+      const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
+      if (lastUserMsg) {
+        title = lastUserMsg.content.slice(0, 30) + (lastUserMsg.content.length > 30 ? '...' : '');
       }
 
       const session: ChatSession = {
@@ -292,12 +301,6 @@ function App() {
 
     if (tabId && typeof chrome !== 'undefined') {
       await setActiveSessionId(tabId, newId);
-      await saveSession({
-        id: newId,
-        title: 'New Chat',
-        updatedAt: Date.now(),
-        messages: [welcomeMsg as StoredMessage]
-      });
     }
 
     if (clearView) setView('chat');
@@ -665,6 +668,9 @@ function App() {
                 onSubmit={manualSubmit}
                 pageTitle={pageContext?.title}
                 contextEnabled={!!pageContext} // If we have context, it is enabled.
+                isContextEnabledSetting={isContextEnabled}
+                isWarningDismissed={isWarningDismissed}
+                onDismissWarning={() => setIsWarningDismissed(true)}
                 onToggleContext={() => {
                   // Optional: Allow temporary disable? For now, just link to settings or toggle settings?
                   // If user clicks this, maybe they want to DISABLE it?

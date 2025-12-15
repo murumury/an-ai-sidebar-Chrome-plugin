@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Settings } from '../lib/storage';
 import { getSettings, saveSettings } from '../lib/storage';
-import { Save, Key, Cpu, Thermometer, Globe, Trash2 } from 'lucide-react';
+import { Save, Key, Cpu, Thermometer, Globe, Trash2, Pin } from 'lucide-react';
 
 interface SettingsViewProps {
     onBack: () => void;
@@ -11,6 +11,7 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
     const [settings, setSettings] = useState<Settings | null>(null);
     const [newServerUrl, setNewServerUrl] = useState('');
     const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+    const [showPinGuide, setShowPinGuide] = useState(false);
 
     // Predefined providers
     const PROVIDERS = [
@@ -165,6 +166,36 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                     >
                         <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${settings.enableContext ? 'left-6' : 'left-1'}`} />
                     </button>
+                </div>
+
+                {/* Pin to Toolbar Guide */}
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                        <div className="flex flex-col">
+                            <span className="text-sm font-medium flex items-center gap-2">
+                                <Pin size={16} className="rotate-45" />
+                                Pin to Toolbar
+                            </span>
+                            <span className="text-xs text-gray-500">Keep SideAgent visible</span>
+                        </div>
+                        <button
+                            onClick={() => setShowPinGuide(!showPinGuide)}
+                            className={`w-10 h-5 rounded-full relative transition-colors ${showPinGuide ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        >
+                            <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${showPinGuide ? 'left-6' : 'left-1'}`} />
+                        </button>
+                    </div>
+
+                    {showPinGuide && (
+                        <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800 text-sm">
+                            <p className="font-medium mb-2 text-blue-800 dark:text-blue-300">How to pin SideAgent:</p>
+                            <ol className="list-decimal list-inside space-y-1 text-gray-700 dark:text-gray-300 ml-1">
+                                <li>Click the <span className="font-bold">Extensions</span> icon (🧩) in your browser toolbar.</li>
+                                <li>Find <span className="font-bold">SideAgent</span> in the list.</li>
+                                <li>Click the <span className="font-bold">Pin</span> icon (<Pin size={12} className="inline rotate-45" />) next to it.</li>
+                            </ol>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -382,6 +413,6 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
                     Back to Chat
                 </button>
             </div>
-        </div>
+        </div >
     );
 };
