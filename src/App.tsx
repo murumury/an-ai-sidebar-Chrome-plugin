@@ -10,6 +10,8 @@ import { Bot } from 'lucide-react';
 import type { ChatSession, StoredMessage } from './lib/storage';
 import { getActiveSessionId, setActiveSessionId, getSession, saveSession, getSessions, getSettings, saveSettings, deleteSession, clearAllSessions } from './lib/storage';
 import { mcpService } from './lib/mcp';
+import { generateImage } from './lib/image-gen';
+import { imageDB } from './lib/image-db';
 import { runLLMStream } from './lib/llm';
 
 
@@ -29,12 +31,22 @@ function App() {
   const [isContextEnabled, setIsContextEnabled] = useState(false);
   const [isWarningDismissed, setIsWarningDismissed] = useState(false);
 
-
   // App State
   const [view, setView] = useState<'chat' | 'history' | 'settings'>('chat');
   const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Ref to track active sessionId in async loops
+  const sessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   const [sessionsList, setSessionsList] = useState<ChatSession[]>([]);
   const tabIdRef = useRef<number | null>(null);
+
+  // Settings State (Lifted for ChatInput access)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [settings, setSettings] = useState<any | null>(null);
 
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false); // Track streaming state
@@ -164,6 +176,7 @@ function App() {
 
       // Load and Connect MCP
       const settings = await getSettings();
+      setSettings(settings); // Init state
       setIsContextEnabled(settings.enableContext);
       // ... settings loading ...
       if (settings.mcpServers) {
@@ -230,6 +243,7 @@ function App() {
     const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
       if (areaName === 'local' && changes['user_settings']) {
         const newSettings = changes['user_settings'].newValue as any;
+        setSettings(newSettings); // Update local state
 
         // Sync MCP
         if (newSettings?.mcpServers) {
@@ -334,32 +348,119 @@ function App() {
   };
 
   // Helper: Trigger LLM with current messages
+
+
   // Helper: Trigger LLM with current messages
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const generateAIResponse = async (initialHistory: any[]) => {
+    // Capture the session ID when this request started
+    const startingSessionId = sessionId;
+
     setIsStreaming(true);
     // We'll maintain a local history for this turn
     let currentHistory = [...initialHistory];
+    const settings = await getSettings(); // Fetch settings first
+
+    // Check for Image Generation Models
+    const isImageModel = (
+      settings.model.includes('dall-e') ||
+      settings.model.includes('gpt-image') ||
+      settings.model.includes('gemini') && settings.model.includes('image') || // Matches gemini-2.5-flash-image, etc.
+      settings.model.includes('grok') && settings.model.includes('image')
+    );
+
+    if (isImageModel) {
+      // Identify the prompt (last user message)
+      const lastUserMsg = initialHistory[initialHistory.length - 1];
+      if (!lastUserMsg || lastUserMsg.role !== 'user') {
+        setIsStreaming(false);
+        return;
+      }
+
+      // Create placeholder
+      const aiMessageId = (Date.now() + 1).toString();
+      const placeholder = { id: aiMessageId, role: 'assistant', content: '' };
+
+      // Safety check before state update
+      if (sessionIdRef.current !== startingSessionId) return;
+      setMessages([...currentHistory, placeholder] as any[]);
+
+      try {
+        const image = await generateImage(lastUserMsg.content, settings);
+        await imageDB.saveImage(image);
+
+        // Replace placeholder with final message
+        const finalMsg = {
+          id: image.id,
+          role: 'assistant',
+          content: `Here is your image for: "${image.prompt}"`,
+          imageIds: [image.id]
+        };
+
+        if (sessionIdRef.current === startingSessionId) {
+          currentHistory.push(finalMsg);
+          setMessages([...currentHistory] as any[]);
+        }
+
+      } catch (err: any) {
+        console.error("Image Gen Error:", err);
+        if (sessionIdRef.current === startingSessionId) {
+          setMessages((prev: any[]) => [...prev.slice(0, -1), { id: 'error', role: 'assistant', content: `Error generating image: ${err.message}` }]);
+        }
+      } finally {
+        if (sessionIdRef.current === startingSessionId) {
+          setIsStreaming(false);
+        }
+      }
+      return; // Exit, do not call simple LLM
+    }
 
     // Create a placeholder for the INITIAL AI response (streaming)
     const aiMessageId = (Date.now() + 1).toString();
     const placeholder = { id: aiMessageId, role: 'assistant', content: '' };
     // Update UI immediately (append placeholder)
-    setMessages([...currentHistory, placeholder] as any[]);
+    if (sessionIdRef.current === startingSessionId) {
+      setMessages([...currentHistory, placeholder] as any[]);
+    }
 
     try {
-      const settings = await getSettings();
+      // settings already fetched above
+
 
       // 1. Fetch MCP Tools
       const mcpTools = await mcpService.listTools();
-      const tools = mcpTools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.inputSchema
+      // Map sanitized name -> { originalName, serverUrl }
+      const toolNameMap = new Map<string, { originalName: string, serverUrl?: string }>();
+
+      const tools = mcpTools.map(t => {
+        // Resolve a "Unique Name" for the LLM
+        // If serverName is present, prefix it: ServerName_ToolName
+        // Then sanitize everything.
+        let uniqueName = t.name;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const serverName = (t as any).serverName; // Cast due to mixed type return
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sourceUrl = (t as any).sourceUrl;
+
+        if (serverName) {
+          uniqueName = `${serverName}_${t.name}`;
         }
-      }));
+
+        // OpenAI requires function names to match /^[a-zA-Z0-9_-]+$/
+        const validName = uniqueName.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        toolNameMap.set(validName, { originalName: t.name, serverUrl: sourceUrl });
+
+        return {
+          type: 'function',
+          function: {
+            name: validName,
+            // Append hint to description if serverName exists
+            description: t.description + (serverName ? ` (Provided by ${serverName})` : ''),
+            parameters: t.inputSchema || { type: 'object', properties: {} }
+          }
+        };
+      });
 
       // Loop for multi-step tool calls (Max 25 turns)
       let turnCount = 0;
@@ -368,10 +469,13 @@ function App() {
       while (turnCount < MAX_TURNS) {
         turnCount++;
 
+        // CHECK SESSION VALIDITY
+        if (sessionIdRef.current !== startingSessionId) break;
+
         // Prepare args for LLM
         // Prepare args for LLM
         // 1. Global System Message
-        const systemPrompt = "You are AgentDock, a Chrome extension AI assistant. You can read the current page's information if the user allows it, and you support using MCP tools provided by the user. When the user asks about the current page's content, prioritize using the 'Current Page Context' provided to you.";
+        const systemPrompt = "You are a Chrome extension AI assistant. You can read the current page's information if the user allows it, and you support using MCP tools provided by the user. When the user asks about the current page's content, prioritize using the 'Current Page Context' provided to you.";
 
         let messagesForLLM = [
           { role: 'system', content: systemPrompt },
@@ -414,6 +518,9 @@ function App() {
         const stream = runLLMStream(messagesForLLM as any, settings, tools); // Fixed args order
 
         for await (const chunk of stream) {
+          // Check session again inside stream loop
+          if (sessionIdRef.current !== startingSessionId) break;
+
           // Chunk types: 'content' | 'reasoning' | 'tool_call_start' | 'tool_call_delta'
 
           if (chunk.type === 'content') {
@@ -462,6 +569,8 @@ function App() {
         }
 
         // ONE Turn finished (LLM stopped generating).
+        if (sessionIdRef.current !== startingSessionId) break;
+
         // 1. Update history with the AI's final message (content + tool_calls + reasoning)
         const assistantMsg: any = {
           role: 'assistant',
@@ -491,11 +600,17 @@ function App() {
 
         // 3. Execute Tools
         for (const tc of toolCalls) {
+          if (sessionIdRef.current !== startingSessionId) break;
+
           // A. Push "Loading" Tool Message
+          const mappedInfo = toolNameMap.get(tc.name);
+          const originalName = mappedInfo ? mappedInfo.originalName : tc.name;
+          const targetUrl = mappedInfo?.serverUrl; // Can be undefined, validation in callTool
+
           const toolMsg: any = {
             role: 'tool',
             tool_call_id: tc.id,
-            name: tc.name, // Custom prop for UI display
+            name: tc.name, // The AI used the sanitized name, so we respond with that.
             content: ''    // Empty initially
           };
           currentHistory.push(toolMsg);
@@ -506,7 +621,12 @@ function App() {
           try {
             const args = JSON.parse(tc.arguments || '{}');
             // Cast result content to avoid 'unknown' error
-            const result = await mcpService.callTool(tc.name, args);
+            // EXECUTE with ORIGINAL NAME and TARGET URL
+            const result = await mcpService.callTool(originalName, args, targetUrl);
+
+            // Re-check session before using result (execution takes time)
+            if (sessionIdRef.current !== startingSessionId) break;
+
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             resultString = (result.content as any[]).map((c: any) => c.type === 'text' ? c.text : '').join('\n'); // Fix TS errors
             if (result.isError) {
@@ -515,6 +635,8 @@ function App() {
           } catch (err: any) {
             resultString = `Error executing tool: ${err.message}`;
           }
+
+          if (sessionIdRef.current !== startingSessionId) break;
 
           // B. Update Content
           toolMsg.content = resultString;
@@ -527,11 +649,15 @@ function App() {
 
     } catch (err: any) {
       console.error(err);
-      const errorMessage = err.message || "An error occurred.";
-      // If we failed, append error message
-      setMessages((prev: any[]) => [...prev, { id: 'error', role: 'assistant', content: `Error: ${errorMessage}` }]);
+      if (sessionIdRef.current === startingSessionId) {
+        const errorMessage = err.message || "An error occurred.";
+        // If we failed, append error message
+        setMessages((prev: any[]) => [...prev, { id: 'error', role: 'assistant', content: `Error: ${errorMessage}` }]);
+      }
     } finally {
-      setIsStreaming(false);
+      if (sessionIdRef.current === startingSessionId) {
+        setIsStreaming(false);
+      }
     }
   };
 
@@ -578,6 +704,11 @@ function App() {
 
       await generateAIResponse(newHistory);
     }
+  };
+
+  const handleDeleteMessage = async (msgId: string) => {
+    setMessages((prev: any[]) => prev.filter(m => m.id !== msgId));
+    // The useEffect hook monitors `messages` and will auto-save the updated list.
   };
 
   const loadHistory = async () => {
@@ -652,9 +783,11 @@ function App() {
                     toolName={m.name}
                     onRetry={handleRetry}
                     onEdit={handleEdit}
+                    onDelete={handleDeleteMessage}
                     isStreaming={isStreaming && isLast}
                     isLast={isLast}
                     showBorder={showBorder}
+                    imageIds={m.imageIds}
                   />
                 );
               })}
@@ -692,6 +825,18 @@ function App() {
                       saveSettings({ ...s, enableContext: false });
                     }
                   });
+                }}
+                settings={settings}
+                onUpdateSettings={async (newSettings) => {
+                  setSettings(newSettings); // Optimistic UI update if we had a local state, but we rely on storage listener usually.
+                  // Actually, for instant feedback, better to update local state passed down if we had one.
+                  // But here we just save, and let storage listener update.
+                  // Wait, `settings` variable is not in state in this component except locally in useEffect.
+                  // We need to lift proper settings state or fetch it.
+                  // Let's rely on saveSettings triggering the storage listener which updates `settings` if we add it to state.
+                  // WAIT, we don't have a `settings` state in App component yet!
+                  // I need to add `settings` state to App component first.
+                  await saveSettings(newSettings);
                 }}
               />
             </div>

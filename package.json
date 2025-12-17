@@ -1,7 +1,7 @@
 {
   "name": "side-agent-extension",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^2.0.77",
     "@ai-sdk/react": "^2.0.108",
+    "@lobehub/icons": "^2.45.0",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "ai": "^5.0.108",
     "clsx": "^2.1.1",

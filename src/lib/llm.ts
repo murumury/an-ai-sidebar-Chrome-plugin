@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { DEFAULT_PROVIDER_SETTINGS } from './storage';
 import type { Settings } from './storage';
 
 export interface LLMMessage {
@@ -25,17 +26,36 @@ export const runLLMStream = async function* (
     // Relaxed Validation: Allow empty API Key if using custom provider (likely local)
     let finalApiKey = settings.apiKey;
     if (!finalApiKey) {
-        if (settings.provider === 'custom' || settings.baseUrl) {
+        if (settings.provider === 'custom') {
+            finalApiKey = 'not-needed';
+        } else if (settings.baseUrl) {
             finalApiKey = 'not-needed';
         } else {
-            throw new Error('API Key is missing. Please check your settings.');
+            // Note: Some providers might work without key if proxied, but generally error
+            // For now, let it pass if user insists, or throw?
+            // throw new Error('API Key is missing. Please check your settings.');
+            // Actually, the user might be relying on env vars? No, this is browser.
+            // Let's fallback to 'missing-key' to let OAI throw 401 with clear message if really needed, 
+            // but user said "incorrect API key" error, so they HAVE a key, but it's the wrong one?
+            // Or they are using a custom endpoint that doesn't need auth.
+            // Proceeding with check:
+            if (settings.provider !== 'custom') {
+                // throw new Error('API Key is missing. Please check your settings.');
+            }
         }
     }
 
-    const baseUrl = settings.baseUrl || (
-        settings.provider === 'vivgrid' ? 'https://api.vivgrid.com/v1' :
-            undefined
-    );
+    // Ensure we have a valid key for the SDK
+    if (!finalApiKey) finalApiKey = 'not-needed';
+
+    // Base URL Logic:
+    // 1. Use user-provided Global Base URL if present.
+    // 2. If empty, fallback to the Default Base URL for the active provider.
+    // 3. If that's also empty (e.g. custom), default behavior (undefined) -> OpenAI.
+    let baseUrl = settings.baseUrl;
+    if (!baseUrl) {
+        baseUrl = DEFAULT_PROVIDER_SETTINGS[settings.provider]?.baseUrl;
+    }
 
     const client = new OpenAI({
         apiKey: finalApiKey,

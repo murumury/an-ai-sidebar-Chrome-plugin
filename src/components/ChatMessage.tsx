@@ -1,19 +1,21 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Copy, RotateCw, Pencil, Check } from 'lucide-react';
+import { Copy, RotateCw, Pencil, Check, Trash, Image as ImageIcon } from 'lucide-react';
 import { clsx as cn } from 'clsx';
-
+import { imageDB } from '../lib/image-db';
 interface ChatMessageProps {
     id: string; // Added ID for identification
     role: 'user' | 'assistant' | 'system' | 'tool';
     content: string;
     onRetry?: (id: string) => void;
     onEdit?: (id: string, newContent: string) => void;
+    onDelete?: (id: string) => void;
     isStreaming?: boolean;
     reasoning?: string;
     toolName?: string;
+    imageIds?: string[];
     isLast?: boolean;
     showBorder?: boolean;
 }
@@ -111,20 +113,60 @@ const Code = ({ node, inline, className, children, ...props }: any) => {
     }
     // Block code (inside pre)
     return (
-        <code className={`${className} bg-transparent`} {...props}>
+        <code className={`${className} bg - transparent`} {...props}>
             {children}
         </code>
     );
 };
 
-export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isStreaming, toolName, isLast, showBorder = true }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onDelete, isStreaming, toolName, showBorder = true, imageIds }: ChatMessageProps) => {
     // ... existings hooks ...
     const isUser = role === 'user';
     const [isEditing, setIsEditing] = useState(false);
     const [editContent, setEditContent] = useState(content);
     const [copied, setCopied] = useState(false);
 
-    // ... existing handlers ...
+    // Image Logic
+    const [imageUrls, setImageUrls] = useState<string[]>([]);
+    const [isLoadingImages, setIsLoadingImages] = useState(false);
+
+    useEffect(() => {
+        if (imageIds && imageIds.length > 0) {
+            setIsLoadingImages(true);
+            console.log('[ChatMessage] Loading images for:', imageIds);
+            Promise.all(imageIds.map(async (imgId) => {
+                try {
+                    const img = await imageDB.getImage(imgId);
+                    console.log('[ChatMessage] Retrieved image:', imgId, img);
+
+                    if (img && img.image.kind === 'blob' && img.image.value instanceof Blob) {
+                        console.log('[ChatMessage] Blob details:', img.image.value.size, img.image.value.type);
+                        const url = URL.createObjectURL(img.image.value);
+                        console.log('[ChatMessage] Created URL:', url);
+                        return url;
+                    } else {
+                        console.warn('[ChatMessage] Invalid image data:', img);
+                        return null;
+                    }
+                } catch (e) {
+                    console.error('[ChatMessage] Error fetching image:', e);
+                    return null;
+                }
+            })).then(urls => {
+                const validUrls = urls.filter(u => u !== null) as string[];
+                console.log('[ChatMessage] Final valid URLs:', validUrls);
+                setImageUrls(validUrls);
+                setIsLoadingImages(false);
+            });
+        }
+    }, [imageIds]);
+
+    useEffect(() => {
+        return () => {
+            imageUrls.forEach(url => URL.revokeObjectURL(url));
+        };
+    }, [imageUrls]);
+
     const handleCopy = () => {
         navigator.clipboard.writeText(content);
         setCopied(true);
@@ -151,20 +193,16 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
     return (
         <div className={cn(
             "group w-full text-gray-800 dark:text-gray-100",
-            // For AI (assistant) AND Tool, keep the full-width background. For User, transparent background.
             !isUser && "bg-transparent",
-            // Apply border only if showBorder is true (default true, but App passes logic)
             showBorder && "border-b border-black/5 dark:border-white/5"
         )}>
             <div className={cn(
                 "text-base gap-4 md:gap-6 md:max-w-2xl lg:max-w-xl xl:max-w-3xl flex lg:px-0 m-auto w-full p-4",
-                // User messages right-aligned
                 isUser ? "justify-end" : "justify-start"
             )}>
                 {isUser ? (
                     <div className="flex flex-col items-end max-w-[85%]">
                         <div className="bg-[#95ec69] dark:bg-[#2bcd42] text-black rounded-2xl px-4 py-2 relative overflow-hidden shadow-sm">
-                            {/* Message Body */}
                             {isEditing ? (
                                 <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2 min-w-[200px]">
                                     <textarea
@@ -179,11 +217,9 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                                     </div>
                                 </div>
                             ) : (
-                                <div className="whitespace-pre-wrap text-sm">{content}</div>
+                                <div className="whitespace-pre-wrap text-sm break-words break-all">{content}</div>
                             )}
                         </div>
-
-                        {/* Action Buttons (Outside for User) */}
                         {!isEditing && content && !isStreaming && (
                             <div className="flex items-center gap-2 mt-1 mr-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 dark:text-gray-500">
                                 <button onClick={handleCopy} className="hover:text-gray-600 dark:hover:text-gray-300" title="Copy">
@@ -194,11 +230,55 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                                         <Pencil size={14} />
                                     </button>
                                 )}
+                                {onDelete && (
+                                    <button onClick={() => onDelete(id)} className="hover:text-red-500 dark:hover:text-red-400" title="Delete">
+                                        <Trash size={14} />
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>
                 ) : (
                     <div className="relative overflow-hidden flex-1">
+                        {/* Header */}
+                        {(role === 'tool' || toolName) && (
+                            <div className="flex items-center gap-2 select-none mb-1">
+                                <span className="font-semibold text-sm text-gray-900 dark:text-gray-100">
+                                    {role === 'tool' ? 'MCP Tool Output' : ''}
+                                </span>
+                                {toolName && (
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-mono">
+                                        {toolName}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Tool Execution Loading State */}
+                        {role === 'tool' && !content && (
+                            <div className="flex items-center gap-2 text-gray-500 text-sm italic animate-pulse py-1">
+                                <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+                                <span>Using tool...</span>
+                            </div>
+                        )}
+
+                        {/* Image Rendering */}
+                        {imageUrls.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                                {imageUrls.map((url, idx) => (
+                                    <div key={idx} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 shadow-sm max-w-[300px]">
+                                        <img src={url} alt="Generated" className="w-full h-auto object-cover" />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {isLoadingImages && (
+                            <div className="flex items-center gap-2 text-xs text-gray-400 animate-pulse mb-2">
+                                <ImageIcon size={14} />
+                                Loading images...
+                            </div>
+                        )}
+
                         {role === 'tool' ? (
                             <details className="group/tool mb-2" open={!content}>
                                 <summary className="cursor-pointer text-xs font-medium text-gray-500 flex items-center gap-1 select-none hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
@@ -215,10 +295,7 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                                     <div className="mt-2 pl-3 border-l-2 border-gray-200 dark:border-gray-600 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono bg-black/5 dark:bg-white/5 p-3 rounded-r-lg overflow-x-auto">
                                         {content}
                                         <div className="flex justify-end mt-2">
-                                            <button
-                                                onClick={handleCopy}
-                                                className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 uppercase tracking-wider font-bold"
-                                            >
+                                            <button onClick={handleCopy} className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 uppercase tracking-wider font-bold">
                                                 {copied ? <Check size={10} /> : <Copy size={10} />}
                                                 <span>{copied ? 'Copied' : 'Copy'}</span>
                                             </button>
@@ -228,7 +305,6 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                             </details>
                         ) : (
                             <>
-                                {/* Reasoning / Thinking Block */}
                                 {reasoning && (
                                     <details className="mb-2 group/reasoning">
                                         <summary className="cursor-pointer text-xs font-medium text-gray-500 flex items-center gap-1 select-none hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
@@ -240,17 +316,12 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                                         </div>
                                     </details>
                                 )}
-
-                                {/* Message Body */}
-                                <div className="markdown-body prose prose-sm dark:prose-invert max-w-none break-words">
+                                <div className="markdown-body prose prose-sm dark:prose-invert max-w-none break-words overflow-x-auto">
                                     {content ? (
                                         <ReactMarkdown
                                             remarkPlugins={[remarkGfm]}
                                             rehypePlugins={[rehypeHighlight]}
-                                            components={{
-                                                pre: Pre,
-                                                code: Code
-                                            }}
+                                            components={{ pre: Pre, code: Code }}
                                         >
                                             {content}
                                         </ReactMarkdown>
@@ -265,9 +336,8 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                             </>
                         )}
 
-                        {/* Action Buttons (Inside for AI - Only for Assistant messages usually, or if we want them for tools?) */}
-                        {/* Users usually don't retry tools separately, so only show for assistant role */}
-                        {role === 'assistant' && content && !isStreaming && isLast && id !== 'welcome' && (
+                        {/* Action Buttons for Assistant */}
+                        {role === 'assistant' && (content || imageUrls.length > 0) && !isStreaming && id !== 'welcome' && (
                             <div className="flex items-center gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400">
                                 <button onClick={handleCopy} className="flex items-center gap-1 hover:text-gray-600 dark:hover:text-gray-300 text-xs" title="Copy Message">
                                     {copied ? <Check size={14} /> : <Copy size={14} />}
@@ -277,6 +347,12 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, isS
                                     <button onClick={() => onRetry(id)} className="flex items-center gap-1 hover:text-gray-600 dark:hover:text-gray-300 text-xs" title="Retry">
                                         <RotateCw size={14} />
                                         <span>Retry</span>
+                                    </button>
+                                )}
+                                {onDelete && (
+                                    <button onClick={() => onDelete(id)} className="flex items-center gap-1 hover:text-red-500 dark:hover:text-red-400 text-xs" title="Delete">
+                                        <Trash size={14} />
+                                        <span>Delete</span>
                                     </button>
                                 )}
                             </div>
