@@ -1,10 +1,18 @@
 // Storage interface for Chat Sessions
 
+export interface AttachedFile {
+    name: string;
+    content: string;
+    size: number;
+}
+
 export interface StoredMessage {
     id: string;
     role: 'user' | 'assistant' | 'system';
     content: string;
+    reasoning_content?: string; // DeepSeek/Reasoning models
     imageIds?: string[]; // IDs of UnifiedImage stored in IndexedDB
+    attachedFiles?: AttachedFile[]; // New: Attached files
 }
 
 export interface ChatSession {

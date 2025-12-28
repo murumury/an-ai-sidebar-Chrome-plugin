@@ -5,6 +5,8 @@ import rehypeHighlight from 'rehype-highlight';
 import { Copy, RotateCw, Pencil, Check, Trash, Image as ImageIcon } from 'lucide-react';
 import { clsx as cn } from 'clsx';
 import { imageDB } from '../lib/image-db';
+import type { AttachedFile } from '../lib/storage';
+
 interface ChatMessageProps {
     id: string; // Added ID for identification
     role: 'user' | 'assistant' | 'system' | 'tool';
@@ -16,6 +18,7 @@ interface ChatMessageProps {
     reasoning?: string;
     toolName?: string;
     imageIds?: string[];
+    attachedFiles?: AttachedFile[];
     isLast?: boolean;
     showBorder?: boolean;
 }
@@ -119,7 +122,7 @@ const Code = ({ node, inline, className, children, ...props }: any) => {
     );
 };
 
-export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onDelete, isStreaming, toolName, showBorder = true, imageIds }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onDelete, isStreaming, toolName, showBorder = true, imageIds, attachedFiles }: ChatMessageProps) => {
     // ... existings hooks ...
     const isUser = role === 'user';
     const [isEditing, setIsEditing] = useState(false);
@@ -203,6 +206,18 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onD
                 {isUser ? (
                     <div className="flex flex-col items-end max-w-[85%]">
                         <div className="bg-[#95ec69] dark:bg-[#2bcd42] text-black rounded-2xl px-4 py-2 relative overflow-hidden shadow-sm">
+                            {/* Attached Files */}
+                            {attachedFiles && attachedFiles.length > 0 && (
+                                <div className="flex flex-wrap gap-2 mb-2 pb-2 border-b border-black/10">
+                                    {attachedFiles.map((f, i) => (
+                                        <div key={i} className="flex items-center gap-1.5 bg-white/50 dark:bg-black/20 rounded px-2 py-1 text-xs max-w-[200px]" title={`${f.name} (${(f.size / 1024).toFixed(1)}KB)`}>
+                                            <span className="truncate">{f.name}</span>
+                                            <span className="opacity-50 text-[10px] uppercase">File</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
                             {isEditing ? (
                                 <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2 min-w-[200px]">
                                     <textarea

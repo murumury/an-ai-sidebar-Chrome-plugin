@@ -12,6 +12,7 @@ import { getActiveSessionId, setActiveSessionId, getSession, saveSession, getSes
 import { mcpService } from './lib/mcp';
 import { generateImage } from './lib/image-gen';
 import { imageDB } from './lib/image-db';
+import { FileProcessor } from './lib/file-processing';
 import { runLLMStream } from './lib/llm';
 
 
@@ -477,9 +478,25 @@ function App() {
         // 1. Global System Message
         const systemPrompt = "You are a Chrome extension AI assistant. You can read the current page's information if the user allows it, and you support using MCP tools provided by the user. When the user asks about the current page's content, prioritize using the 'Current Page Context' provided to you.";
 
+        // Pre-process history to inject attached files for the LLM (hidden from UI)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const processedHistory = currentHistory.map((m: any) => {
+          // If message has attached files, append them to content
+          if (m.attachedFiles && m.attachedFiles.length > 0) {
+            let injected = m.content;
+            injected += "\n\n--- ATTACHED FILES ---\n";
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            m.attachedFiles.forEach((f: any) => {
+              injected += `\nFile: ${f.name}\n${f.content}\n--- End of ${f.name} ---\n`;
+            });
+            return { ...m, content: injected };
+          }
+          return m;
+        });
+
         let messagesForLLM = [
           { role: 'system', content: systemPrompt },
-          ...currentHistory
+          ...processedHistory
         ];
 
         // 2. Inject Context if available (as a separate system message or appended)
@@ -667,11 +684,43 @@ function App() {
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const manualSubmit = async (e: any) => {
+  const manualSubmit = async (e: any, files?: File[]) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() && (!files || files.length === 0)) return;
 
-    const userMessage = { id: Date.now().toString(), role: 'user', content: input };
+    let attachedFiles: any[] = [];
+
+    // Process Files if any
+    if (files && files.length > 0) {
+      try {
+        // We split them here for the "hidden" prompt construction later
+        // But we also want to store them for UI
+        const rawFiles = await FileProcessor.readFiles(files);
+        attachedFiles = rawFiles.map(f => ({
+          name: f.name,
+          content: FileProcessor.splitText(f.content).join('\n'), // Store full content for later injection
+          size: f.content.length // Approximation or usage actual file.size from input? Input `files` has size.
+        }));
+
+        // Update sizes from original file objects for accuracy
+        attachedFiles = attachedFiles.map((af, i) => ({
+          ...af,
+          size: files[i].size
+        }));
+
+      } catch (err) {
+        console.error("File processing error:", err);
+        // Optionally notify user
+      }
+    }
+
+    const userMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: input,
+      attachedFiles: attachedFiles.length > 0 ? attachedFiles : undefined
+    };
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const newHistory = [...messages, userMessage] as any[];
 
@@ -788,6 +837,7 @@ function App() {
                     isLast={isLast}
                     showBorder={showBorder}
                     imageIds={m.imageIds}
+                    attachedFiles={m.attachedFiles}
                   />
                 );
               })}

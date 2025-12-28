@@ -260,6 +260,7 @@ export class McpService {
                     entry.connectPromise = undefined; // Clear promise when done
                 }
                 console.log(`MCP: Connected to ${url} via ${useHttpTransport ? 'HTTP POST' : 'SSE'}`);
+                this._toolsCache = null; // Invalidate cache on new connection
 
             } catch (err) {
                 console.error(`MCP: Failed to connect to ${url}`, err);
@@ -290,7 +291,9 @@ export class McpService {
                 console.error(`MCP: Cleanup error for ${url}`, e);
             }
             this.clientMap.delete(url);
+            this.clientMap.delete(url);
             console.log(`MCP: Disconnected ${url}`);
+            this._toolsCache = null; // Invalidate cache on disconnection
         }
     }
 
@@ -324,8 +327,15 @@ export class McpService {
     }
 
     private toolRouter = new Map<string, string>(); // toolName -> serverUrl
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private _toolsCache: any[] | null = null;
 
-    async listTools() {
+    async listTools(force: boolean = false) {
+        if (!force && this._toolsCache) {
+            console.log('MCP: Using cached tools');
+            return this._toolsCache;
+        }
+
         // Wait for any pending connections (with timeout)
         const pendingPromises = [];
         for (const [, entry] of this.clientMap) {
@@ -358,6 +368,7 @@ export class McpService {
                 }
             }
         }
+        this._toolsCache = allTools;
         return allTools;
     }
 

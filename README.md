@@ -11,7 +11,9 @@ SideAgent: Sidebar AI Assistant with MCP Client.
 - **Rich Chat Interface**:
   - Markdown rendering with syntax highlighting for code blocks.
   - WeChat-style comfortable UI with dark mode support (follows system preference).
-  - **DeepSeek Thinking**: Standardized UI for displaying reasoning chains.
+  - **Thinking Process Display**: Standardized UI for displaying reasoning chains from models like DeepSeek and Grok.
+- **Image Generation**: direct integration with DALL-E 3, Google Imagen, and Grok 2 for generating images within the chat.
+- **High Performance**: Smart caching of tools reduces latency for a snappier experience.
 - **Privacy Focused**: API keys and settings are stored locally in your browser.
 
 ## Installation & Development
@@ -64,6 +66,12 @@ This extension supports MCP to connect with local tools.
 2. Add your local MCP server URL (SSE endpoint).
 3. Toggle servers on/off as needed.
 The AI can then call tools provided by these servers during the conversation.
+
+### 5. Image Generation
+To generate images:
+1. Select an image-capable model from the model dropdown (e.g., `dall-e-3`, `gemini-2.5-flash-image`, `grok-2-image`).
+2. Type your image description (e.g., "A futuristic city with flying cars").
+3. The AI will generate and display the image directly in the chat.
 
 ## 🦙 Local Model Support (Ollama)
 

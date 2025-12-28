@@ -1,4 +1,4 @@
-import { Send, FileText, X, AlertCircle, ChevronDown, ChevronRight, Check, Image as ImageIcon } from 'lucide-react';
+import { Send, FileText, X, AlertCircle, ChevronDown, ChevronRight, Check, Image as ImageIcon, Paperclip } from 'lucide-react';
 import { useRef, useEffect, useState } from 'react';
 import { BUILTIN_MODELS } from '../lib/storage';
 import type { Settings, CustomProvider } from '../lib/storage';
@@ -7,7 +7,7 @@ import { ProviderLogo } from './ProviderLogo';
 interface ChatInputProps {
     value: string;
     onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-    onSubmit: (e: React.FormEvent) => void;
+    onSubmit: (e: React.FormEvent, files?: File[]) => void; // Updated signature
     pageTitle?: string;
     contextEnabled: boolean;
     isContextEnabledSetting: boolean;
@@ -20,9 +20,13 @@ interface ChatInputProps {
 
 export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled, isContextEnabledSetting, isWarningDismissed, onDismissWarning, onToggleContext, settings, onUpdateSettings }: ChatInputProps) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const [showModelMenu, setShowModelMenu] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+
+    // Local state for file preview before sending
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
     // Auto-resize textarea
     useEffect(() => {
@@ -50,8 +54,34 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
 
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            onSubmit(e);
+            handleSubmit(e);
         }
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            const newFiles = Array.from(e.target.files);
+            const validFiles = newFiles.filter(file => {
+                if (file.size > 20 * 1024 * 1024) {
+                    alert(`File ${file.name} exceeds the 20MB limit.`);
+                    return false;
+                }
+                return true;
+            });
+            if (validFiles.length > 0) {
+                setSelectedFiles(prev => [...prev, ...validFiles]);
+            }
+        }
+        // Reset input
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    };
+
+    // We need to intercept submit to pass files
+    const handleSubmit = (e: React.FormEvent) => {
+        onSubmit(e, selectedFiles);
+        setSelectedFiles([]); // Clear local after submit
     };
 
     const handleModelSelect = (providerId: string, model: string) => {
@@ -97,6 +127,10 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
             custom: 'Custom'
         };
         return map[id] || id;
+    };
+
+    const removeFile = (index: number) => {
+        setSelectedFiles(prev => prev.filter((_, i) => i !== index));
     };
 
     if (!settings) return null; // Or skeleton
@@ -228,8 +262,40 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
                 </div>
             </div>
 
+            {/* File Preview Chips */}
+            {selectedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-3 mb-2">
+                    {selectedFiles.map((f, idx) => (
+                        <div key={idx} className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1 text-xs text-gray-700 dark:text-gray-200">
+                            <span className="truncate max-w-[150px]">{f.name}</span>
+                            <span className="opacity-50 text-[10px]">{(f.size / 1024).toFixed(1)}KB</span>
+                            <button onClick={() => removeFile(idx)} className="hover:text-red-500">
+                                <X size={12} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {/* Main Input Box */}
             <div className="relative flex items-end w-full p-3 bg-white dark:bg-[#40414f] border border-gray-200 dark:border-gray-700 rounded-2xl shadow-sm text-base focus-within:shadow-md focus-within:border-gray-300 dark:focus-within:border-gray-600 transition-all z-10">
+                <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                />
+
+                {/* Upload Button */}
+                <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-2 mr-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    title="Upload file for context"
+                >
+                    <Paperclip size={18} />
+                </button>
+
                 <textarea
                     ref={textareaRef}
                     rows={1}
@@ -237,12 +303,12 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
                     onChange={onChange}
                     onKeyDown={handleKeyDown}
                     placeholder={`Ask anything...`}
-                    className="w-full max-h-[200px] py-1 pl-1 pr-10 bg-transparent border-none outline-none resize-none text-gray-800 dark:text-gray-100 placeholder-gray-400 align-bottom overflow-y-auto custom-scrollbar"
+                    className="w-full max-h-[200px] py-1 bg-transparent border-none outline-none resize-none text-gray-800 dark:text-gray-100 placeholder-gray-400 align-bottom overflow-y-auto custom-scrollbar"
                 />
                 <button
-                    onClick={onSubmit}
-                    disabled={!value.trim()}
-                    className="absolute right-2 bottom-2 p-2 rounded-lg bg-black dark:bg-white text-white dark:text-black disabled:bg-transparent disabled:text-gray-300 dark:disabled:text-gray-500 hover:opacity-80 transition-all disabled:hover:opacity-100"
+                    onClick={handleSubmit}
+                    disabled={!value.trim() && selectedFiles.length === 0}
+                    className="p-2 ml-1 rounded-lg bg-black dark:bg-white text-white dark:text-black disabled:bg-transparent disabled:text-gray-300 dark:disabled:text-gray-500 hover:opacity-80 transition-all disabled:hover:opacity-100"
                 >
                     <Send size={18} />
                 </button>
