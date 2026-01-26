@@ -2,7 +2,7 @@
     "manifest_version": 3,
     "name": "SideAgent",
     "version": "1.3.0",
-    "description": "Sidebar AI Assistant with MCP Client",
+    "description": "AI Sidebar with Skills, MCP Tools & Multi-Model Support",
     "permissions": [
         "sidePanel",
         "storage",
