@@ -71,6 +71,8 @@ export const runLLMStream = async function* (
         model: modelId,
         messages: messages, // Ensure reasoning_content is passed if present in history
         stream: true,
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens || undefined,
     };
 
     if (tools && tools.length > 0) {

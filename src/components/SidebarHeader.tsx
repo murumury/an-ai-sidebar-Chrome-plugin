@@ -1,4 +1,4 @@
-import { MoreHorizontal, SquarePen, X, Settings as SettingsIcon } from 'lucide-react';
+import { History, SquarePen, X, Settings as SettingsIcon } from 'lucide-react';
 
 interface SidebarHeaderProps {
     onToggleHistory: () => void;
@@ -12,13 +12,13 @@ export const SidebarHeader = ({ onToggleHistory, onToggleSettings, onNewChat, on
 
     return (
         <header className="flex-none flex items-center justify-between px-2 py-2 bg-transparent z-10 transition-colors">
-            {/* Left: Menu & Settings */}
+            {/* Left: Settings & History */}
             <div className="flex items-center">
-                <button className={iconButtonClass} title="History" onClick={onToggleHistory}>
-                    <MoreHorizontal size={18} />
-                </button>
                 <button className={iconButtonClass} title="Settings" onClick={onToggleSettings}>
                     <SettingsIcon size={18} />
+                </button>
+                <button className={iconButtonClass} title="History" onClick={onToggleHistory}>
+                    <History size={18} />
                 </button>
             </div>
 

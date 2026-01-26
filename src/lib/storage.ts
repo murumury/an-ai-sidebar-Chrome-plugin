@@ -115,6 +115,10 @@ export interface Settings {
     providerSettings: Record<string, ProviderConfig>;
     customProviders: CustomProvider[];
     enableContext: boolean;
+    // New Configurable Parameters
+    customInstructions: string;
+    maxTokens: number;
+    maxTurns: number;
 }
 
 const SETTINGS_KEY = 'user_settings';
@@ -170,6 +174,9 @@ const DEFAULT_SETTINGS: Settings = {
     providerSettings: DEFAULT_PROVIDER_SETTINGS,
     customProviders: [],
     enableContext: false,
+    customInstructions: '',
+    maxTokens: 4096,
+    maxTurns: 25,
 };
 
 export const getSettings = async (): Promise<Settings> => {

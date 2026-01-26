@@ -2,8 +2,19 @@ import { useEffect, useState } from 'react';
 import type { Settings, CustomProvider, ProviderConfig } from '../lib/storage';
 import { getSettings, saveSettings } from '../lib/storage';
 import { mcpService } from '../lib/mcp';
-import { Save, Key, Trash2, Pin, ChevronDown, ChevronRight, Plus, Check, X } from 'lucide-react';
+import { Save, Key, Trash2, Pin, ChevronDown, ChevronRight, Plus, Check, X, Cpu, Server, Zap, Sliders, AlertTriangle } from 'lucide-react';
 import { ProviderLogo } from './ProviderLogo';
+import { SkillsView } from './SkillsView';
+
+// Storage key for section collapse states
+const SECTION_STATE_KEY = 'settings_section_states';
+
+interface SectionStates {
+    aiProvider: boolean;
+    mcpServers: boolean;
+    agentSkills: boolean;
+    modelParams: boolean;
+}
 
 interface SettingsViewProps {
     onBack: () => void;
@@ -13,6 +24,14 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
     const [settings, setSettings] = useState<Settings | null>(null);
     const [newServerUrl, setNewServerUrl] = useState('');
     const [showPinGuide, setShowPinGuide] = useState(false);
+
+    // Section collapse states (default to collapsed)
+    const [sectionStates, setSectionStates] = useState<SectionStates>({
+        aiProvider: false,
+        mcpServers: false,
+        agentSkills: false,
+        modelParams: false,
+    });
 
     // UI State for Provider List
     const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
@@ -88,6 +107,35 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
         { id: 'deepseek', name: 'DeepSeek', defaultBaseUrl: 'https://api.deepseek.com/v1' },
         { id: 'grok', name: 'Grok', defaultBaseUrl: 'https://api.x.ai/v1' },
     ];
+
+    // Load section states from localStorage on mount
+    useEffect(() => {
+        const loadSectionStates = async () => {
+            try {
+                const result = await chrome.storage.local.get(SECTION_STATE_KEY);
+                if (result[SECTION_STATE_KEY]) {
+                    setSectionStates(result[SECTION_STATE_KEY] as SectionStates);
+                }
+            } catch (e) {
+                console.error('Failed to load section states:', e);
+            }
+        };
+        loadSectionStates();
+    }, []);
+
+    // Toggle section and persist state
+    const toggleSection = async (section: keyof SectionStates) => {
+        const newStates = {
+            ...sectionStates,
+            [section]: !sectionStates[section],
+        };
+        setSectionStates(newStates);
+        try {
+            await chrome.storage.local.set({ [SECTION_STATE_KEY]: newStates });
+        } catch (e) {
+            console.error('Failed to save section states:', e);
+        }
+    };
 
     useEffect(() => {
         getSettings().then(s => {
@@ -323,313 +371,450 @@ export const SettingsView = ({ onBack }: SettingsViewProps) => {
             </div>
 
             {/* Providers List */}
-            <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">AI Provider</h3>
-                    <button
-                        onClick={() => setIsAddingProvider(true)}
-                        className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700 dark:text-blue-400"
-                    >
-                        <Plus size={14} /> Add Custom
-                    </button>
+            <div className="flex flex-col gap-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                <div
+                    className="flex items-center justify-between cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 p-2 -m-2 rounded-lg transition-colors"
+                    onClick={() => toggleSection('aiProvider')}
+                >
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                        {sectionStates.aiProvider ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <Cpu size={16} className="text-blue-500" />
+                        AI Provider
+                    </h3>
+                    {sectionStates.aiProvider && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setIsAddingProvider(true); }}
+                            className="text-xs flex items-center gap-1 text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                        >
+                            <Plus size={14} /> Add Custom
+                        </button>
+                    )}
                 </div>
 
-                {/* Add Custom Provider Input */}
-                {isAddingProvider && (
-                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 flex gap-2">
-                        <input
-                            className="flex-1 text-sm bg-transparent outline-none"
-                            placeholder="Provider Name (e.g. My Local LLM)"
-                            value={newProviderName}
-                            onChange={e => setNewProviderName(e.target.value)}
-                            autoFocus
-                        />
-                        <button onClick={handleAddCustomProvider} disabled={!newProviderName.trim()} className="text-green-600 font-medium px-2 disabled:opacity-50">Add</button>
-                        <button onClick={() => setIsAddingProvider(false)} className="text-gray-500 px-2">Cancel</button>
-                    </div>
-                )}
+                {/* Collapsible AI Provider Content */}
+                {sectionStates.aiProvider && (
+                    <>
+                        {/* Add Custom Provider Input */}
+                        {isAddingProvider && (
+                            <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 flex gap-2">
+                                <input
+                                    className="flex-1 text-sm bg-transparent outline-none"
+                                    placeholder="Provider Name (e.g. My Local LLM)"
+                                    value={newProviderName}
+                                    onChange={e => setNewProviderName(e.target.value)}
+                                    autoFocus
+                                />
+                                <button onClick={handleAddCustomProvider} disabled={!newProviderName.trim()} className="text-green-600 font-medium px-2 disabled:opacity-50">Add</button>
+                                <button onClick={() => setIsAddingProvider(false)} className="text-gray-500 px-2">Cancel</button>
+                            </div>
+                        )}
 
-                <div className="space-y-2">
-                    {allProviders.map(provider => {
-                        const isExpanded = expandedProvider === provider.id;
-                        const isActive = settings.provider === provider.id;
+                        <div className="space-y-2">
+                            {allProviders.map(provider => {
+                                const isExpanded = expandedProvider === provider.id;
+                                const isActive = settings.provider === provider.id;
 
-                        return (
-                            <div key={provider.id} className={`rounded-lg border transition-all ${isExpanded ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200 dark:border-gray-700'}`}>
-                                {/* Header */}
-                                <div
-                                    className="p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-t-lg"
-                                    onClick={() => handleExpandProvider(provider.id)}
-                                >
-                                    <ProviderLogo id={provider.id} className={isActive ? 'text-blue-600' : 'text-gray-400'} />
-                                    <div className="flex-1 flex items-center gap-2">
-                                        <span className="font-medium text-sm">{provider.name}</span>
-                                        {isActive && <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-0.5 rounded-full font-medium">Active</span>}
-                                        {provider.isCustom && <span className="text-[10px] bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-full">Custom</span>}
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        {!isActive && (
-                                            <button
-                                                onClick={(e) => handleActivateProvider(provider.id, e)}
-                                                className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-300 mr-2"
-                                            >
-                                                Use
-                                            </button>
-                                        )}
-                                        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                                    </div>
-                                </div>
-
-                                {/* Expanded Body */}
-                                {isExpanded && editingProviderSettings && (
-                                    <div className="p-3 pt-0 border-t border-gray-100 dark:border-gray-800 space-y-4 bg-gray-50/50 dark:bg-gray-900/50 rounded-b-lg">
-
-                                        {/* API Key */}
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-medium text-gray-500">API Key</label>
-                                            <div className="relative">
-                                                <Key size={14} className="absolute left-2 top-2.5 text-gray-400" />
-                                                <input
-                                                    type="password"
-                                                    value={editingProviderSettings.apiKey}
-                                                    onChange={e => setEditingProviderSettings({ ...editingProviderSettings, apiKey: e.target.value })}
-                                                    className="w-full pl-8 p-2 rounded border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-800 focus:border-blue-500 outline-none"
-                                                    placeholder="sk-..."
-                                                />
+                                return (
+                                    <div key={provider.id} className={`rounded-lg border transition-all ${isExpanded ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200 dark:border-gray-700'}`}>
+                                        {/* Header */}
+                                        <div
+                                            className="p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-t-lg"
+                                            onClick={() => handleExpandProvider(provider.id)}
+                                        >
+                                            <ProviderLogo id={provider.id} className={isActive ? 'text-blue-600' : 'text-gray-400'} />
+                                            <div className="flex-1 flex items-center gap-2">
+                                                <span className="font-medium text-sm">{provider.name}</span>
+                                                {isActive && <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 px-2 py-0.5 rounded-full font-medium">Active</span>}
+                                                {provider.isCustom && <span className="text-[10px] bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-full">Custom</span>}
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                {!isActive && (
+                                                    <button
+                                                        onClick={(e) => handleActivateProvider(provider.id, e)}
+                                                        className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded text-gray-600 dark:text-gray-300 mr-2"
+                                                    >
+                                                        Use
+                                                    </button>
+                                                )}
+                                                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                                             </div>
                                         </div>
 
-                                        {/* Base URL */}
-                                        <div className="space-y-1">
-                                            <label className="text-xs font-medium text-gray-500">Base URL</label>
-                                            <div className="relative">
-                                                <ProviderLogo id={provider.id} className="absolute left-2 top-2.5 text-gray-400" />
-                                                <input
-                                                    type="text"
-                                                    value={editingProviderSettings.baseUrl}
-                                                    onChange={e => setEditingProviderSettings({ ...editingProviderSettings, baseUrl: e.target.value })}
-                                                    className="w-full pl-8 p-2 rounded border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-800 focus:border-blue-500 outline-none"
-                                                    placeholder={provider.defaultBaseUrl || "https://..."}
-                                                />
-                                            </div>
-                                        </div>
+                                        {/* Expanded Body */}
+                                        {isExpanded && editingProviderSettings && (
+                                            <div className="p-3 pt-0 border-t border-gray-100 dark:border-gray-800 space-y-4 bg-gray-50/50 dark:bg-gray-900/50 rounded-b-lg">
 
-                                        {/* Custom Models Manager */}
-                                        <div className="space-y-2">
-                                            <label className="text-xs font-medium text-gray-500">Custom Models</label>
-                                            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
-                                                {/* List */}
-                                                <div className="flex flex-wrap gap-2 mb-2">
-                                                    {(editingProviderSettings.customModels?.length > 0) ? editingProviderSettings.customModels.map(m => (
-                                                        <span key={m} className="bg-gray-100 dark:bg-gray-700 text-xs px-2 py-1 rounded-full flex items-center gap-1 group">
-                                                            {m}
-                                                            <button
-                                                                onClick={() => handleDeleteCustomModel(m)}
-                                                                className="text-gray-400 hover:text-red-500"
-                                                            >
-                                                                <X size={10} />
-                                                            </button>
-                                                        </span>
-                                                    )) : <span className="text-xs text-gray-400 italic">No custom models added.</span>}
+                                                {/* API Key */}
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-medium text-gray-500">API Key</label>
+                                                    <div className="relative">
+                                                        <Key size={14} className="absolute left-2 top-2.5 text-gray-400" />
+                                                        <input
+                                                            type="password"
+                                                            value={editingProviderSettings.apiKey}
+                                                            onChange={e => setEditingProviderSettings({ ...editingProviderSettings, apiKey: e.target.value })}
+                                                            className="w-full pl-8 p-2 rounded border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-800 focus:border-blue-500 outline-none"
+                                                            placeholder="sk-..."
+                                                        />
+                                                    </div>
                                                 </div>
 
-                                                {/* Add Input */}
-                                                <div className="flex gap-2">
-                                                    <input
-                                                        className="flex-1 text-xs p-1 border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none focus:border-blue-500"
-                                                        placeholder="Add model ID (e.g. gpt-6)"
-                                                        value={newCustomModelName}
-                                                        onChange={e => setNewCustomModelName(e.target.value)}
-                                                        onKeyDown={e => e.key === 'Enter' && handleAddCustomModel()}
-                                                    />
+                                                {/* Base URL */}
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-medium text-gray-500">Base URL</label>
+                                                    <div className="relative">
+                                                        <ProviderLogo id={provider.id} className="absolute left-2 top-2.5 text-gray-400" />
+                                                        <input
+                                                            type="text"
+                                                            value={editingProviderSettings.baseUrl}
+                                                            onChange={e => setEditingProviderSettings({ ...editingProviderSettings, baseUrl: e.target.value })}
+                                                            className="w-full pl-8 p-2 rounded border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-800 focus:border-blue-500 outline-none"
+                                                            placeholder={provider.defaultBaseUrl || "https://..."}
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                {/* Custom Models Manager */}
+                                                <div className="space-y-2">
+                                                    <label className="text-xs font-medium text-gray-500">Custom Models</label>
+                                                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+                                                        {/* List */}
+                                                        <div className="flex flex-wrap gap-2 mb-2">
+                                                            {(editingProviderSettings.customModels?.length > 0) ? editingProviderSettings.customModels.map(m => (
+                                                                <span key={m} className="bg-gray-100 dark:bg-gray-700 text-xs px-2 py-1 rounded-full flex items-center gap-1 group">
+                                                                    {m}
+                                                                    <button
+                                                                        onClick={() => handleDeleteCustomModel(m)}
+                                                                        className="text-gray-400 hover:text-red-500"
+                                                                    >
+                                                                        <X size={10} />
+                                                                    </button>
+                                                                </span>
+                                                            )) : <span className="text-xs text-gray-400 italic">No custom models added.</span>}
+                                                        </div>
+
+                                                        {/* Add Input */}
+                                                        <div className="flex gap-2">
+                                                            <input
+                                                                className="flex-1 text-xs p-1 border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none focus:border-blue-500"
+                                                                placeholder="Add model ID (e.g. gpt-6)"
+                                                                value={newCustomModelName}
+                                                                onChange={e => setNewCustomModelName(e.target.value)}
+                                                                onKeyDown={e => e.key === 'Enter' && handleAddCustomModel()}
+                                                            />
+                                                            <button
+                                                                onClick={handleAddCustomModel}
+                                                                disabled={!newCustomModelName.trim()}
+                                                                className="text-blue-600 disabled:opacity-50"
+                                                            >
+                                                                <Plus size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-400">
+                                                        Note: Standard models are available by default in the chat menu. Add specific model IDs here if they are missing.
+                                                    </p>
+                                                </div>
+
+                                                {/* Actions Footer */}
+                                                <div className="flex items-center justify-between pt-2">
+                                                    {provider.isCustom ? (
+                                                        <button
+                                                            onClick={(e) => handleDeleteCustomProvider(provider.id, e)}
+                                                            className="text-red-500 hover:text-red-600 text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-red-50"
+                                                        >
+                                                            <Trash2 size={14} /> Delete
+                                                        </button>
+                                                    ) : <div />} {/* Spacer */}
+
                                                     <button
-                                                        onClick={handleAddCustomModel}
-                                                        disabled={!newCustomModelName.trim()}
-                                                        className="text-blue-600 disabled:opacity-50"
+                                                        onClick={() => handleSaveProvider(provider.id)}
+                                                        disabled={saveStatus[provider.id] === 'saving'}
+                                                        className={`px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 transition-colors text-white ${saveStatus[provider.id] === 'saved' ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
+                                                            }`}
                                                     >
-                                                        <Plus size={14} />
+                                                        {saveStatus[provider.id] === 'saved' ? <Check size={14} /> : <Save size={14} />}
+                                                        {saveStatus[provider.id] === 'saving' ? 'Saving...' : saveStatus[provider.id] === 'saved' ? 'Saved' : 'Save'}
                                                     </button>
                                                 </div>
                                             </div>
-                                            <p className="text-[10px] text-gray-400">
-                                                Note: Standard models are available by default in the chat menu. Add specific model IDs here if they are missing.
-                                            </p>
-                                        </div>
-
-                                        {/* Actions Footer */}
-                                        <div className="flex items-center justify-between pt-2">
-                                            {provider.isCustom ? (
-                                                <button
-                                                    onClick={(e) => handleDeleteCustomProvider(provider.id, e)}
-                                                    className="text-red-500 hover:text-red-600 text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-red-50"
-                                                >
-                                                    <Trash2 size={14} /> Delete
-                                                </button>
-                                            ) : <div />} {/* Spacer */}
-
-                                            <button
-                                                onClick={() => handleSaveProvider(provider.id)}
-                                                disabled={saveStatus[provider.id] === 'saving'}
-                                                className={`px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1.5 transition-colors text-white ${saveStatus[provider.id] === 'saved' ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
-                                                    }`}
-                                            >
-                                                {saveStatus[provider.id] === 'saved' ? <Check size={14} /> : <Save size={14} />}
-                                                {saveStatus[provider.id] === 'saving' ? 'Saving...' : saveStatus[provider.id] === 'saved' ? 'Saved' : 'Save'}
-                                            </button>
-                                        </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
+                                );
+                            })}
+                        </div>
+                    </>
+                )}
             </div>
 
             {/* MCP Configuration */}
             <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">MCP Servers</h3>
-                {/* Server List */}
-                <div className="space-y-2">
-                    {settings.mcpServers && settings.mcpServers.map((server, idx) => {
-                        const status = connectionStatuses[server.url] || 'disconnected';
+                <div
+                    className="flex items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 p-2 -m-2 rounded-lg transition-colors"
+                    onClick={() => toggleSection('mcpServers')}
+                >
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                        {sectionStates.mcpServers ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <Server size={16} className="text-green-500" />
+                        MCP Servers
+                    </h3>
+                </div>
+                {/* Collapsible MCP Content */}
+                {sectionStates.mcpServers && (
+                    <>
+                        {/* Server List */}
+                        <div className="space-y-2">
+                            {settings.mcpServers && settings.mcpServers.map((server, idx) => {
+                                const status = connectionStatuses[server.url] || 'disconnected';
 
-                        return (
-                            <div key={idx} className="flex flex-col gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-300 transition-all">
+                                return (
+                                    <div key={idx} className="flex flex-col gap-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-300 transition-all">
 
-                                <div className="flex items-center gap-2">
-                                    {/* Status Dot */}
-                                    <div
-                                        className={`w-2 h-2 rounded-full transition-all ${getStatusColor(server.enabled, status)}`}
-                                        title={`Status: ${status}${!server.enabled ? ' (Disabled)' : ''}`}
-                                    />
+                                        <div className="flex items-center gap-2">
+                                            {/* Status Dot */}
+                                            <div
+                                                className={`w-2 h-2 rounded-full transition-all ${getStatusColor(server.enabled, status)}`}
+                                                title={`Status: ${status}${!server.enabled ? ' (Disabled)' : ''}`}
+                                            />
 
-                                    <span className="flex-1 text-xs truncate font-mono text-gray-600 dark:text-gray-300">
-                                        {server.url}
-                                    </span>
+                                            <span className="flex-1 text-xs truncate font-mono text-gray-600 dark:text-gray-300">
+                                                {server.url}
+                                            </span>
 
-                                    {/* Toggle */}
-                                    <button
-                                        onClick={() => {
-                                            if (!settings) return;
-                                            const newServers = [...settings.mcpServers];
-                                            newServers[idx].enabled = !newServers[idx].enabled;
-                                            updateGlobalSetting('mcpServers', newServers);
-                                        }}
-                                        className={`text-[10px] px-2 py-0.5 rounded border ${server.enabled
-                                            ? 'bg-blue-100 text-blue-700 border-blue-200'
-                                            : 'bg-gray-100 text-gray-500 border-gray-200'
-                                            }`}
-                                    >
-                                        {server.enabled ? 'ON' : 'OFF'}
-                                    </button>
+                                            {/* Toggle */}
+                                            <button
+                                                onClick={() => {
+                                                    if (!settings) return;
+                                                    const newServers = [...settings.mcpServers];
+                                                    newServers[idx].enabled = !newServers[idx].enabled;
+                                                    updateGlobalSetting('mcpServers', newServers);
+                                                }}
+                                                className={`text-[10px] px-2 py-0.5 rounded border ${server.enabled
+                                                    ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                                    : 'bg-gray-100 text-gray-500 border-gray-200'
+                                                    }`}
+                                            >
+                                                {server.enabled ? 'ON' : 'OFF'}
+                                            </button>
 
-                                    {/* Delete */}
-                                    <button
-                                        onClick={() => {
-                                            if (!settings) return;
-                                            const newServers = settings.mcpServers.filter((_, i) => i !== idx);
-                                            updateGlobalSetting('mcpServers', newServers);
-                                        }}
-                                        className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
-                                </div>
+                                            {/* Delete */}
+                                            <button
+                                                onClick={() => {
+                                                    if (!settings) return;
+                                                    const newServers = settings.mcpServers.filter((_, i) => i !== idx);
+                                                    updateGlobalSetting('mcpServers', newServers);
+                                                }}
+                                                className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
 
-                                {/* Optional Name Input */}
-                                <div className="flex items-center gap-2 pl-4">
-                                    <label className="text-[10px] text-gray-400">Name:</label>
-                                    <input
-                                        type="text"
-                                        value={server.name || ''}
-                                        placeholder="Optional category (e.g. Finance)"
-                                        className="flex-1 text-[10px] bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-blue-500 outline-none p-0.5 text-gray-600 dark:text-gray-400"
-                                        onChange={(e) => {
-                                            if (!settings) return;
-                                            const newServers = [...settings.mcpServers];
-                                            newServers[idx].name = e.target.value;
-                                            updateGlobalSetting('mcpServers', newServers);
-                                        }}
-                                    />
-                                </div>
+                                        {/* Optional Name Input */}
+                                        <div className="flex items-center gap-2 pl-4">
+                                            <label className="text-[10px] text-gray-400">Name:</label>
+                                            <input
+                                                type="text"
+                                                value={server.name || ''}
+                                                placeholder="Optional category (e.g. Finance)"
+                                                className="flex-1 text-[10px] bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-blue-500 outline-none p-0.5 text-gray-600 dark:text-gray-400"
+                                                onChange={(e) => {
+                                                    if (!settings) return;
+                                                    const newServers = [...settings.mcpServers];
+                                                    newServers[idx].name = e.target.value;
+                                                    updateGlobalSetting('mcpServers', newServers);
+                                                }}
+                                            />
+                                        </div>
 
-                                {/* Error Message */}
-                                {status === 'error' && (
-                                    <div className="pl-4 text-[10px] text-red-500 font-mono break-all">
-                                        Error: {mcpService.getConnectionError(server.url) || 'Unknown error'}
-                                    </div>
-                                )}
+                                        {/* Error Message */}
+                                        {status === 'error' && (
+                                            <div className="pl-4 text-[10px] text-red-500 font-mono break-all">
+                                                Error: {mcpService.getConnectionError(server.url) || 'Unknown error'}
+                                            </div>
+                                        )}
 
-                                {/* Tools Toggle & List */}
-                                <div className="pl-4">
-                                    <button
-                                        onClick={() => handleToggleServerTools(server.url)}
-                                        disabled={status !== 'connected'}
-                                        className="text-[10px] text-blue-500 hover:underline flex items-center gap-1 disabled:text-gray-400 disabled:no-underline"
-                                    >
-                                        {expandedServer === server.url ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                        {expandedServer === server.url ? 'Hide Tools' : 'View Tools'}
-                                    </button>
+                                        {/* Tools Toggle & List */}
+                                        <div className="pl-4">
+                                            <button
+                                                onClick={() => handleToggleServerTools(server.url)}
+                                                disabled={status !== 'connected'}
+                                                className="text-[10px] text-blue-500 hover:underline flex items-center gap-1 disabled:text-gray-400 disabled:no-underline"
+                                            >
+                                                {expandedServer === server.url ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                                {expandedServer === server.url ? 'Hide Tools' : 'View Tools'}
+                                            </button>
 
-                                    {expandedServer === server.url && (
-                                        <div className="mt-2 space-y-2">
-                                            {serverTools.length === 0 ? (
-                                                <div className="text-[10px] text-gray-400 italic">No tools found (or loading...)</div>
-                                            ) : (
-                                                serverTools.map((tool, tIdx) => (
-                                                    <div key={tIdx} className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 p-2 rounded text-[10px]">
-                                                        <div className="font-mono font-medium text-gray-700 dark:text-gray-300">{tool.name}</div>
-                                                        <div className="text-gray-500 truncate">{tool.description}</div>
-                                                    </div>
-                                                ))
+                                            {expandedServer === server.url && (
+                                                <div className="mt-2 space-y-2">
+                                                    {serverTools.length === 0 ? (
+                                                        <div className="text-[10px] text-gray-400 italic">No tools found (or loading...)</div>
+                                                    ) : (
+                                                        serverTools.map((tool, tIdx) => (
+                                                            <div key={tIdx} className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 p-2 rounded text-[10px]">
+                                                                <div className="font-mono font-medium text-gray-700 dark:text-gray-300">{tool.name}</div>
+                                                                <div className="text-gray-500 truncate">{tool.description}</div>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
-                                    )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Add New Server */}
+                        <div className="space-y-2">
+                            <label className="block text-xs font-medium text-gray-500">Add Server (SSE)</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={newServerUrl}
+                                    onChange={(e) => setNewServerUrl(e.target.value)}
+                                    placeholder="http://localhost:3000/sse"
+                                    className="flex-1 p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                />
+                                <button
+                                    disabled={!newServerUrl.trim()}
+                                    onClick={async () => {
+                                        if (!settings || !newServerUrl.trim()) return;
+
+                                        const urlStr = newServerUrl.trim();
+                                        try {
+                                            const urlObj = new URL(urlStr);
+                                            const origin = `${urlObj.protocol}//${urlObj.hostname}/*`;
+                                            const originWithPort = urlObj.port ? `${urlObj.protocol}//${urlObj.hostname}:${urlObj.port}/*` : origin;
+                                            const granted = await chrome.permissions.request({ origins: [originWithPort] });
+                                            if (!granted) return;
+                                        } catch (e) {
+                                            console.error("Invalid URL", e);
+                                            return;
+                                        }
+
+                                        const newServers = [...(settings.mcpServers || []), { url: urlStr, enabled: true }];
+                                        updateGlobalSetting('mcpServers', newServers);
+                                        setNewServerUrl('');
+                                    }}
+                                    className="px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white rounded-lg text-xs font-medium hover:bg-black disabled:opacity-50"
+                                >
+                                    Add
+                                </button>
+
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* Skills Management */}
+            <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                <div
+                    className="flex items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 p-2 -m-2 rounded-lg transition-colors"
+                    onClick={() => toggleSection('agentSkills')}
+                >
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                        {sectionStates.agentSkills ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <Zap size={16} className="text-yellow-500" />
+                        Agent Skills
+                    </h3>
+                </div>
+                {/* Collapsible Skills Content */}
+                {sectionStates.agentSkills && (
+                    <SkillsView />
+                )}
+            </div>
+
+            {/* Model Parameters */}
+            <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                <div
+                    className="flex items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 p-2 -m-2 rounded-lg transition-colors"
+                    onClick={() => toggleSection('modelParams')}
+                >
+                    <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                        {sectionStates.modelParams ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <Sliders size={16} className="text-purple-500" />
+                        Model Parameters
+                    </h3>
+                </div>
+
+                {sectionStates.modelParams && (
+                    <div className="space-y-4 p-2">
+                        {/* Basic Settings */}
+
+                        {/* Temperature */}
+                        <div className="space-y-2">
+                            <div className="flex justify-between">
+                                <label className="text-xs font-medium text-gray-500">Temperature: {settings.temperature}</label>
+                            </div>
+                            <input
+                                type="range"
+                                min="0"
+                                max="2"
+                                step="0.1"
+                                value={settings.temperature}
+                                onChange={(e) => updateGlobalSetting('temperature', parseFloat(e.target.value))}
+                                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-blue-600"
+                            />
+                            <div className="flex justify-between text-[10px] text-gray-400">
+                                <span>Precise</span>
+                                <span>Balanced</span>
+                                <span>Creative</span>
+                            </div>
+                        </div>
+
+                        {/* Custom Instructions (System Prompt Append) */}
+                        <div className="space-y-2">
+                            <label className="text-xs font-medium text-gray-500">Custom Instructions (System Prompt)</label>
+                            <textarea
+                                value={settings.customInstructions || ''}
+                                onChange={(e) => updateGlobalSetting('customInstructions', e.target.value)}
+                                className="w-full h-24 p-2 rounded border border-gray-200 dark:border-gray-700 text-xs bg-white dark:bg-gray-800 focus:border-blue-500 outline-none resize-none"
+                                placeholder="Add custom instructions to guide the AI's behavior..."
+                            />
+                        </div>
+
+                        {/* Max Output Tokens */}
+                        <div className="space-y-2">
+                            <label className="text-xs font-medium text-gray-500">Max Output Tokens</label>
+                            <input
+                                type="number"
+                                value={settings.maxTokens || 4096}
+                                onChange={(e) => updateGlobalSetting('maxTokens', parseInt(e.target.value) || 4096)}
+                                className="w-full p-2 rounded border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-800 focus:border-blue-500 outline-none"
+                            />
+                        </div>
+
+                        {/* Advanced Settings Checkbox/Toggle */}
+                        <details className="group">
+                            <summary className="flex items-center gap-2 text-xs font-medium text-gray-500 cursor-pointer select-none">
+                                <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+                                Advanced Settings
+                            </summary>
+                            <div className="mt-3 pl-4 border-l-2 border-gray-100 dark:border-gray-800 space-y-4">
+                                {/* Max Turns */}
+                                <div className="space-y-2">
+                                    <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+                                        Max Loops (Turns)
+                                        <AlertTriangle size={12} className="text-yellow-500" />
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        value={settings.maxTurns || 25}
+                                        onChange={(e) => updateGlobalSetting('maxTurns', parseInt(e.target.value) || 25)}
+                                        className="w-full p-2 rounded border border-gray-200 dark:border-gray-700 text-sm bg-white dark:bg-gray-800 focus:border-blue-500 outline-none"
+                                    />
+                                    <p className="text-[10px] text-gray-400">
+                                        Limit the number of tool execution loops. Higher values allow complex tasks but may consume more tokens.
+                                    </p>
                                 </div>
                             </div>
-                        );
-                    })}
-                </div>
-
-                {/* Add New Server */}
-                <div className="space-y-2">
-                    <label className="block text-xs font-medium text-gray-500">Add Server (SSE)</label>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={newServerUrl}
-                            onChange={(e) => setNewServerUrl(e.target.value)}
-                            placeholder="http://localhost:3000/sse"
-                            className="flex-1 p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                        />
-                        <button
-                            disabled={!newServerUrl.trim()}
-                            onClick={async () => {
-                                if (!settings || !newServerUrl.trim()) return;
-
-                                const urlStr = newServerUrl.trim();
-                                try {
-                                    const urlObj = new URL(urlStr);
-                                    const origin = `${urlObj.protocol}//${urlObj.hostname}/*`;
-                                    const originWithPort = urlObj.port ? `${urlObj.protocol}//${urlObj.hostname}:${urlObj.port}/*` : origin;
-                                    const granted = await chrome.permissions.request({ origins: [originWithPort] });
-                                    if (!granted) return;
-                                } catch (e) {
-                                    console.error("Invalid URL", e);
-                                    return;
-                                }
-
-                                const newServers = [...(settings.mcpServers || []), { url: urlStr, enabled: true }];
-                                updateGlobalSetting('mcpServers', newServers);
-                                setNewServerUrl('');
-                            }}
-                            className="px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white rounded-lg text-xs font-medium hover:bg-black disabled:opacity-50"
-                        >
-                            Add
-                        </button>
-
+                        </details>
                     </div>
-                </div>
+                )}
             </div>
 
             <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700 text-center">

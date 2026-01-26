@@ -1,4 +1,4 @@
-import { Send, FileText, X, AlertCircle, ChevronDown, ChevronRight, Check, Image as ImageIcon, Paperclip } from 'lucide-react';
+import { Send, FileText, X, AlertCircle, ChevronDown, ChevronRight, Check, Image as ImageIcon, Paperclip, Square } from 'lucide-react';
 import { useRef, useEffect, useState } from 'react';
 import { BUILTIN_MODELS } from '../lib/storage';
 import type { Settings, CustomProvider } from '../lib/storage';
@@ -16,9 +16,11 @@ interface ChatInputProps {
     onToggleContext: () => void;
     settings?: Settings | null;
     onUpdateSettings: (newSettings: Settings) => void;
+    isStreaming?: boolean; // Whether the model is currently generating
+    onStop?: () => void; // Callback to stop generation
 }
 
-export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled, isContextEnabledSetting, isWarningDismissed, onDismissWarning, onToggleContext, settings, onUpdateSettings }: ChatInputProps) => {
+export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled, isContextEnabledSetting, isWarningDismissed, onDismissWarning, onToggleContext, settings, onUpdateSettings, isStreaming, onStop }: ChatInputProps) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [showModelMenu, setShowModelMenu] = useState(false);
@@ -305,13 +307,23 @@ export const ChatInput = ({ value, onChange, onSubmit, pageTitle, contextEnabled
                     placeholder={`Ask anything...`}
                     className="w-full max-h-[200px] py-1 bg-transparent border-none outline-none resize-none text-gray-800 dark:text-gray-100 placeholder-gray-400 align-bottom overflow-y-auto custom-scrollbar"
                 />
-                <button
-                    onClick={handleSubmit}
-                    disabled={!value.trim() && selectedFiles.length === 0}
-                    className="p-2 ml-1 rounded-lg bg-black dark:bg-white text-white dark:text-black disabled:bg-transparent disabled:text-gray-300 dark:disabled:text-gray-500 hover:opacity-80 transition-all disabled:hover:opacity-100"
-                >
-                    <Send size={18} />
-                </button>
+                {isStreaming ? (
+                    <button
+                        onClick={onStop}
+                        className="p-2 ml-1 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-all"
+                        title="Stop generating"
+                    >
+                        <Square size={18} fill="currentColor" />
+                    </button>
+                ) : (
+                    <button
+                        onClick={handleSubmit}
+                        disabled={!value.trim() && selectedFiles.length === 0}
+                        className="p-2 ml-1 rounded-lg bg-black dark:bg-white text-white dark:text-black disabled:bg-transparent disabled:text-gray-300 dark:disabled:text-gray-500 hover:opacity-80 transition-all disabled:hover:opacity-100"
+                    >
+                        <Send size={18} />
+                    </button>
+                )}
             </div>
             <div className="text-center text-[10px] text-gray-400 mt-2">
                 AI can make mistakes. Check important info.

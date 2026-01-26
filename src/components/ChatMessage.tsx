@@ -15,6 +15,7 @@ interface ChatMessageProps {
     onEdit?: (id: string, newContent: string) => void;
     onDelete?: (id: string) => void;
     isStreaming?: boolean;
+    isGenerating?: boolean; // Global state: true while any LLM generation is in progress
     reasoning?: string;
     toolName?: string;
     imageIds?: string[];
@@ -122,7 +123,7 @@ const Code = ({ node, inline, className, children, ...props }: any) => {
     );
 };
 
-export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onDelete, isStreaming, toolName, showBorder = true, imageIds, attachedFiles }: ChatMessageProps) => {
+export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onDelete, isStreaming, isGenerating, toolName, showBorder = true, imageIds, attachedFiles }: ChatMessageProps) => {
     // ... existings hooks ...
     const isUser = role === 'user';
     const [isEditing, setIsEditing] = useState(false);
@@ -351,8 +352,8 @@ export const ChatMessage = ({ id, role, content, reasoning, onRetry, onEdit, onD
                             </>
                         )}
 
-                        {/* Action Buttons for Assistant */}
-                        {role === 'assistant' && (content || imageUrls.length > 0) && !isStreaming && id !== 'welcome' && (
+                        {/* Action Buttons for Assistant - Hide during any generation */}
+                        {role === 'assistant' && (content || imageUrls.length > 0) && !isStreaming && !isGenerating && id !== 'welcome' && (
                             <div className="flex items-center gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400">
                                 <button onClick={handleCopy} className="flex items-center gap-1 hover:text-gray-600 dark:hover:text-gray-300 text-xs" title="Copy Message">
                                     {copied ? <Check size={14} /> : <Copy size={14} />}

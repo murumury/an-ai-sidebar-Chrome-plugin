@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Development docs (AI-generated, specs, etc.)
+.dev-docs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

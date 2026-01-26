@@ -5,7 +5,7 @@ import { HistoryView } from './components/HistoryView';
 import { ChatMessage } from './components/ChatMessage';
 import { SettingsView } from './components/SettingsView';
 import { useChat } from '@ai-sdk/react';
-import { Bot } from 'lucide-react';
+import { Zap } from 'lucide-react';
 // import { mockChatStream } from './lib/api'; // Disabling mock
 import type { ChatSession, StoredMessage } from './lib/storage';
 import { getActiveSessionId, setActiveSessionId, getSession, saveSession, getSessions, getSettings, saveSettings, deleteSession, clearAllSessions } from './lib/storage';
@@ -14,6 +14,9 @@ import { generateImage } from './lib/image-gen';
 import { imageDB } from './lib/image-db';
 import { FileProcessor } from './lib/file-processing';
 import { runLLMStream } from './lib/llm';
+import { skillsManager } from './lib/skills-manager';
+import { skillsMatcher } from './lib/skills-matcher';
+import type { SkillContent } from './lib/skills-storage';
 
 
 
@@ -51,6 +54,18 @@ function App() {
 
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false); // Track streaming state
+  // Session-based Active Skills Map: { [sessionId]: ['skill1', 'skill2'] }
+  const [sessionSkillsMap, setSessionSkillsMap] = useState<Record<string, string[]>>({});
+
+  // Derived active skills for CURRENT session
+  const activeSkills = (sessionId && sessionSkillsMap[sessionId]) || [];
+
+  // Ref to signal stopping generation
+  const stopRequestedRef = useRef(false);
+
+  // Refs for auto-scroll during streaming
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
 
   // Initialize useChat
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +80,28 @@ function App() {
   // Normalize messages
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages = rawMessages as any[];
+
+  // Auto-scroll to bottom during streaming (unless user scrolled up)
+  useEffect(() => {
+    if (isStreaming && !userScrolledUpRef.current && messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  }, [messages, isStreaming]);
+
+  // Reset scroll flag when streaming starts
+  useEffect(() => {
+    if (isStreaming) {
+      userScrolledUpRef.current = false;
+    }
+  }, [isStreaming]);
+
+  // Handle user scroll to detect if they scrolled up
+  const handleMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!isStreaming) return;
+    const target = e.currentTarget;
+    const isAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 50;
+    userScrolledUpRef.current = !isAtBottom;
+  };
 
   // Dark Mode Auto-Detection
   useEffect(() => {
@@ -144,6 +181,16 @@ function App() {
       tabIdRef.current = tabId;
       setIsWarningDismissed(false); // Reset dismissal on tab load
 
+      let activeSessionId = await getActiveSessionId(tabId);
+
+      // Safety Check: If we are currently streaming for this exact session, DO NOT reload from storage
+      // This prevents the "disappearing" bug where a background update (e.g. context fetch) 
+      // triggers a reload that wipes out the in-memory streaming state.
+      if (isStreaming && sessionIdRef.current && activeSessionId === sessionIdRef.current) {
+        console.log("Skipping session load because streaming is active for this session.");
+        return;
+      }
+
 
       // 1. Get Context (Dynamic Injection)
       const settings = await getSettings();
@@ -156,7 +203,7 @@ function App() {
       }
 
       // 2. Load Session
-      const activeSessionId = await getActiveSessionId(tabId);
+      activeSessionId = await getActiveSessionId(tabId);
       if (activeSessionId) {
         const session = await getSession(activeSessionId);
         if (session) {
@@ -310,9 +357,8 @@ function App() {
     const newId = Date.now().toString();
     setSessionId(newId);
 
-    const welcomeMsg = { id: 'welcome', role: 'assistant', content: 'Hello! I can help you with this page. Ask me anything.' };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setMessages([welcomeMsg] as any[]);
+    setMessages([] as any[]);
 
     if (tabId && typeof chrome !== 'undefined') {
       await setActiveSessionId(tabId, newId);
@@ -356,6 +402,10 @@ function App() {
   const generateAIResponse = async (initialHistory: any[]) => {
     // Capture the session ID when this request started
     const startingSessionId = sessionId;
+    if (!startingSessionId) return;
+
+    // Reset stop signal
+    stopRequestedRef.current = false;
 
     setIsStreaming(true);
     // We'll maintain a local history for this turn
@@ -383,8 +433,9 @@ function App() {
       const placeholder = { id: aiMessageId, role: 'assistant', content: '' };
 
       // Safety check before state update
-      if (sessionIdRef.current !== startingSessionId) return;
-      setMessages([...currentHistory, placeholder] as any[]);
+      if (sessionIdRef.current === startingSessionId) {
+        setMessages([...currentHistory, placeholder] as any[]);
+      }
 
       try {
         const image = await generateImage(lastUserMsg.content, settings);
@@ -398,16 +449,20 @@ function App() {
           imageIds: [image.id]
         };
 
+        currentHistory.push(finalMsg);
+
         if (sessionIdRef.current === startingSessionId) {
-          currentHistory.push(finalMsg);
           setMessages([...currentHistory] as any[]);
         }
+        await updateSessionInBackground(startingSessionId, currentHistory);
 
       } catch (err: any) {
         console.error("Image Gen Error:", err);
+        const errorMsg = { id: 'error', role: 'assistant', content: `Error generating image: ${err.message}` };
         if (sessionIdRef.current === startingSessionId) {
-          setMessages((prev: any[]) => [...prev.slice(0, -1), { id: 'error', role: 'assistant', content: `Error generating image: ${err.message}` }]);
+          setMessages((prev: any[]) => [...prev.slice(0, -1), errorMsg]);
         }
+        await updateSessionInBackground(startingSessionId, [...currentHistory, errorMsg]);
       } finally {
         if (sessionIdRef.current === startingSessionId) {
           setIsStreaming(false);
@@ -416,17 +471,8 @@ function App() {
       return; // Exit, do not call simple LLM
     }
 
-    // Create a placeholder for the INITIAL AI response (streaming)
-    const aiMessageId = (Date.now() + 1).toString();
-    const placeholder = { id: aiMessageId, role: 'assistant', content: '' };
-    // Update UI immediately (append placeholder)
-    if (sessionIdRef.current === startingSessionId) {
-      setMessages([...currentHistory, placeholder] as any[]);
-    }
-
     try {
       // settings already fetched above
-
 
       // 1. Fetch MCP Tools
       const mcpTools = await mcpService.listTools();
@@ -463,20 +509,36 @@ function App() {
         };
       });
 
-      // Loop for multi-step tool calls (Max 25 turns)
+      // Loop for multi-step tool calls (Max configured turns)
       let turnCount = 0;
-      const MAX_TURNS = 25;
+      const effectiveMaxTurns = settings.maxTurns || 25;
 
-      while (turnCount < MAX_TURNS) {
+      while (turnCount < effectiveMaxTurns) {
         turnCount++;
 
-        // CHECK SESSION VALIDITY
-        if (sessionIdRef.current !== startingSessionId) break;
+        // STOP only if explicitly requested. 
+        // DO NOT stop if sessionIdRef changed (background streaming)
+        if (stopRequestedRef.current) break;
 
-        // Prepare args for LLM
-        // Prepare args for LLM
-        // 1. Global System Message
-        const systemPrompt = "You are a Chrome extension AI assistant. You can read the current page's information if the user allows it, and you support using MCP tools provided by the user. When the user asks about the current page's content, prioritize using the 'Current Page Context' provided to you.";
+        // --- PREPARE FOR STREAMING THIS TURN ---
+
+        // 1. Create a placeholder for THIS TURN's AI response
+        const aiMessageId = (Date.now() + turnCount).toString();
+        const placeholder = { id: aiMessageId, role: 'assistant', content: '' };
+
+        // Add placeholder to UI state (but not currentHistory yet, until finalized)
+        if (sessionIdRef.current === startingSessionId) {
+          setMessages((prev: any[]) => [...prev, placeholder]);
+        }
+
+        // 2. Prepare args for LLM
+        // Global System Message
+        let systemPrompt = "You are a Chrome extension AI assistant. You can read the current page's information if the user allows it, and you support using MCP tools provided by the user. When the user asks about the current page's content, prioritize using the 'Current Page Context' provided to you.";
+
+        // Append Custom Instructions if Present
+        if (settings.customInstructions && settings.customInstructions.trim()) {
+          systemPrompt += `\n\n[CUSTOM INSTRUCTIONS]\n${settings.customInstructions.trim()}`;
+        }
 
         // Pre-process history to inject attached files for the LLM (hidden from UI)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -499,21 +561,76 @@ function App() {
           ...processedHistory
         ];
 
-        // 2. Inject Context if available (as a separate system message or appended)
+        // Inject Context if available
         if (pageContext) {
           const contextMsg = {
             role: 'system',
             content: `Current Page Context (Use this to answer questions about the page):\nTitle: ${pageContext.title}\nURL: ${pageContext.url}\nContent:\n${pageContext.content}`
           };
-          // Append context message after global system prompt but before history? 
-          // Or just append to the list. Most LLMs handle multiple system messages or we can merge.
-          // Let's insert it as the second message.
           messagesForLLM.splice(1, 0, contextMsg);
         }
 
+        // Skills logic (Progressive Disclosure: only on first turn)
+        let skillsActiveForThisTurn = false;
+        if (turnCount === 1) {
+          try {
+            await skillsManager.initialize();
+            const enabledSkills = await skillsManager.getEnabledSkills();
+            if (enabledSkills.length > 0) {
+              const lastUserMsg = [...processedHistory].reverse().find((m: { role: string }) => m.role === 'user');
+              if (lastUserMsg) {
+                const userMsgContent = typeof lastUserMsg.content === 'string' ? lastUserMsg.content : '';
+                const matchedNames = await skillsMatcher.matchSkills(userMsgContent, enabledSkills);
+
+                if (matchedNames.length > 0) {
+                  setSessionSkillsMap(prev => ({ ...prev, [startingSessionId!]: matchedNames }));
+                  skillsActiveForThisTurn = true;
+
+                  const skillContents: SkillContent[] = [];
+                  for (const name of matchedNames) {
+                    const skill = await skillsManager.loadSkill(name);
+                    if (skill) skillContents.push(skill);
+                  }
+
+                  if (skillContents.length > 0) {
+                    const skillPrompt = skillContents
+                      .map(s => `[Skill: ${s.name}]\n${s.instructions}`)
+                      .join('\n\n---\n\n');
+
+                    const skillsMsg = {
+                      role: 'system',
+                      content: `<skills>\n${skillPrompt}\n</skills>\n\n` +
+                        `IMPORTANT: The above skill instructions contain all the knowledge you need to respond to this request. ` +
+                        `Use the skill instructions directly to generate your response.`
+                    };
+                    messagesForLLM.splice(pageContext ? 2 : 1, 0, skillsMsg);
+                  }
+                } else {
+                  setSessionSkillsMap(prev => {
+                    const next = { ...prev };
+                    if (startingSessionId) delete next[startingSessionId];
+                    return next;
+                  });
+                }
+              }
+            } else {
+              setSessionSkillsMap(prev => {
+                const next = { ...prev };
+                if (startingSessionId) delete next[startingSessionId];
+                return next;
+              });
+            }
+          } catch (skillError) {
+            console.error('Skills matching error:', skillError);
+            setSessionSkillsMap(prev => {
+              const next = { ...prev };
+              if (startingSessionId) delete next[startingSessionId];
+              return next;
+            });
+          }
+        }
+
         // WORKAROUND: Vivgrid Server System Prompt Overwrite
-        // If provider is 'vivgrid', convert all 'system' messages to 'user' messages
-        // so they are not overwritten/prefixed weirdly by the server.
         if (settings.provider === 'vivgrid') {
           messagesForLLM = messagesForLLM.map(m => {
             if (m.role === 'system') {
@@ -523,82 +640,89 @@ function App() {
           });
         }
 
-        // runLLMStream expects standard messages.
-        // We'll collect the stored text chunks here for the UI update
         let fullContent = '';
-        let fullReasoning = ''; // Accumulate reasoning
+        let fullReasoning = '';
         let toolCalls: any[] = [];
         let currentToolCall: any = null;
 
         // Run LLM
-        // Note: runLLMStream is now a generator
-        const stream = runLLMStream(messagesForLLM as any, settings, tools); // Fixed args order
+        const effectiveTools = skillsActiveForThisTurn ? [] : tools;
+        const stream = runLLMStream(messagesForLLM as any, settings, effectiveTools);
+
+        let lastSaveTime = 0;
 
         for await (const chunk of stream) {
-          // Check session again inside stream loop
-          if (sessionIdRef.current !== startingSessionId) break;
-
-          // Chunk types: 'content' | 'reasoning' | 'tool_call_start' | 'tool_call_delta'
+          if (stopRequestedRef.current) break;
 
           if (chunk.type === 'content') {
             fullContent += chunk.content;
-            // Update UI live
-            // We find the LAST message (which is our placeholder/current AI msg) and update it
-            setMessages((prev: any[]) => {
-              const newMsgs = [...prev];
-              const last = newMsgs[newMsgs.length - 1];
-              if (last.role === 'assistant') {
-                last.content = fullContent;
-              }
-              return newMsgs;
-            });
+            // IMMUTABLE UPDATE with SAFETY CHECK
+            if (sessionIdRef.current === startingSessionId) {
+              setMessages((prev: any[]) => {
+                if (prev.length === 0) return prev;
+                const newMsgs = [...prev];
+                const lastIndex = newMsgs.length - 1;
+                const lastMsg = newMsgs[lastIndex];
+                if (lastMsg.role === 'assistant') {
+                  newMsgs[lastIndex] = { ...lastMsg, content: fullContent };
+                }
+                return newMsgs;
+              });
+            }
+
           } else if (chunk.type === 'reasoning') {
             fullReasoning += chunk.content;
-            setMessages((prev: any[]) => {
-              const newMsgs = [...prev];
-              const last = newMsgs[newMsgs.length - 1];
-              if (last.role === 'assistant') {
-                last.reasoning_content = fullReasoning; // Update live UI
-              }
-              return newMsgs;
-            });
-          } else if (chunk.type === 'tool_call_start') {
-            // Push previous if exists?
-            if (currentToolCall) {
-              toolCalls.push(currentToolCall);
+            if (sessionIdRef.current === startingSessionId) {
+              setMessages((prev: any[]) => {
+                if (prev.length === 0) return prev;
+                const newMsgs = [...prev];
+                const lastIndex = newMsgs.length - 1;
+                const lastMsg = newMsgs[lastIndex];
+                if (lastMsg.role === 'assistant') {
+                  newMsgs[lastIndex] = { ...lastMsg, reasoning_content: fullReasoning };
+                }
+                return newMsgs;
+              });
             }
+
+          } else if (chunk.type === 'tool_call_start') {
+            if (currentToolCall) toolCalls.push(currentToolCall);
             currentToolCall = {
               id: chunk.toolCallId,
               name: chunk.name,
               arguments: ''
             };
           } else if (chunk.type === 'tool_call_delta') {
-            if (currentToolCall) {
-              currentToolCall.arguments += chunk.args;
-            }
+            if (currentToolCall) currentToolCall.arguments += chunk.args;
+          }
+
+          // Periodic Background Save (Throttled 1s)
+          const now = Date.now();
+          if (now - lastSaveTime > 1000) {
+            lastSaveTime = now;
+            const tempAssistantMsg = {
+              id: aiMessageId,
+              role: 'assistant',
+              content: fullContent,
+              reasoning_content: fullReasoning
+            };
+            await updateSessionInBackground(startingSessionId, [...currentHistory, tempAssistantMsg]);
           }
         }
 
-        // Push the last tool call if exists
+        // Push the last tool call
         if (currentToolCall) {
           toolCalls.push(currentToolCall);
-          currentToolCall = null; // Reset
+          currentToolCall = null;
         }
 
-        // ONE Turn finished (LLM stopped generating).
-        if (sessionIdRef.current !== startingSessionId) break;
-
-        // 1. Update history with the AI's final message (content + tool_calls + reasoning)
+        // Finalize This Turn
         const assistantMsg: any = {
           role: 'assistant',
-          content: fullContent
+          content: fullContent,
+          id: aiMessageId // Consistent ID
         };
-
-        if (fullReasoning) {
-          assistantMsg.reasoning_content = fullReasoning;
-        }
-
-        // Only append tool_calls if we have them
+        if (fullReasoning) assistantMsg.reasoning_content = fullReasoning;
         if (toolCalls.length > 0) {
           assistantMsg.tool_calls = toolCalls.map(tc => ({
             id: tc.id,
@@ -607,76 +731,122 @@ function App() {
           }));
         }
 
+        // Update HISTORY (Commit the turn)
         currentHistory.push(assistantMsg);
-        setMessages([...currentHistory] as any[]);
 
-        // 2. Check if we have tool calls to execute
-        if (toolCalls.length === 0) {
-          break;
+        // Immediate Save Final State
+        await updateSessionInBackground(startingSessionId, currentHistory);
+
+        // Sync UI if still active
+        if (sessionIdRef.current === startingSessionId) {
+          setMessages([...currentHistory] as any[]);
         }
 
-        // 3. Execute Tools
-        for (const tc of toolCalls) {
-          if (sessionIdRef.current !== startingSessionId) break;
+        if (toolCalls.length === 0) break;
 
-          // A. Push "Loading" Tool Message
+        // Execute Tools
+        for (const tc of toolCalls) {
+          if (stopRequestedRef.current) break;
+
           const mappedInfo = toolNameMap.get(tc.name);
           const originalName = mappedInfo ? mappedInfo.originalName : tc.name;
-          const targetUrl = mappedInfo?.serverUrl; // Can be undefined, validation in callTool
+          const targetUrl = mappedInfo?.serverUrl;
 
           const toolMsg: any = {
             role: 'tool',
             tool_call_id: tc.id,
-            name: tc.name, // The AI used the sanitized name, so we respond with that.
-            content: ''    // Empty initially
+            name: tc.name,
+            content: '',
+            id: (Date.now() + Math.random()).toString()
           };
           currentHistory.push(toolMsg);
-          // Update UI to show "Using Tool..."
-          setMessages([...currentHistory] as any[]);
+
+          if (sessionIdRef.current === startingSessionId) {
+            setMessages([...currentHistory] as any[]);
+          }
+          await updateSessionInBackground(startingSessionId, currentHistory);
 
           let resultString = '';
           try {
+            // ... parsing and execution ...
             const args = JSON.parse(tc.arguments || '{}');
-            // Cast result content to avoid 'unknown' error
-            // EXECUTE with ORIGINAL NAME and TARGET URL
             const result = await mcpService.callTool(originalName, args, targetUrl);
 
-            // Re-check session before using result (execution takes time)
-            if (sessionIdRef.current !== startingSessionId) break;
-
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            resultString = (result.content as any[]).map((c: any) => c.type === 'text' ? c.text : '').join('\n'); // Fix TS errors
-            if (result.isError) {
-              resultString = `Error: ${resultString}`;
-            }
+            resultString = (result.content as any[]).map((c: any) => c.type === 'text' ? c.text : '').join('\n');
+            if (result.isError) resultString = `Error: ${resultString}`;
           } catch (err: any) {
             resultString = `Error executing tool: ${err.message}`;
           }
 
-          if (sessionIdRef.current !== startingSessionId) break;
-
-          // B. Update Content
           toolMsg.content = resultString;
-          // Update UI with result
-          setMessages([...currentHistory] as any[]);
+          // Update UI with tool result
+          if (sessionIdRef.current === startingSessionId) {
+            setMessages([...currentHistory] as any[]);
+          }
+          await updateSessionInBackground(startingSessionId, currentHistory);
         }
-
-        // 4. LOOP -> The 'while' continues, feeding the new history (AI msg + Tool results) back to LLM.
       }
 
     } catch (err: any) {
       console.error(err);
       if (sessionIdRef.current === startingSessionId) {
         const errorMessage = err.message || "An error occurred.";
-        // If we failed, append error message
         setMessages((prev: any[]) => [...prev, { id: 'error', role: 'assistant', content: `Error: ${errorMessage}` }]);
       }
+      // Log error to background session too
+      const errorMessage = err.message || "An error occurred.";
+      await updateSessionInBackground(startingSessionId, [...currentHistory, { id: 'error', role: 'assistant', content: `Error: ${errorMessage}` }]);
+
     } finally {
       if (sessionIdRef.current === startingSessionId) {
         setIsStreaming(false);
       }
+      setSessionSkillsMap(prev => {
+        const next = { ...prev };
+        if (startingSessionId) delete next[startingSessionId];
+        return next;
+      });
     }
   };
+
+  // Helper to persist session in background without relying on UI state
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updateSessionInBackground = async (sid: string, msgs: any[]) => {
+    try {
+      // optimization: Only save if user msg exists
+      const hasUserMessage = msgs.some((m: any) => m.role === 'user');
+      if (!hasUserMessage) return;
+
+      let title = 'Untitled Chat';
+      const lastUserMsg = [...msgs].reverse().find((m: any) => m.role === 'user');
+      if (lastUserMsg) {
+        title = lastUserMsg.content.slice(0, 30) + (lastUserMsg.content.length > 30 ? '...' : '');
+      }
+
+      const session: ChatSession = {
+        id: sid,
+        title,
+        updatedAt: Date.now(),
+        messages: msgs as StoredMessage[]
+      };
+
+      await saveSession(session);
+
+      // Also update local list if needed
+      setSessionsList(prev => {
+        const exists = prev.find(s => s.id === sid);
+        if (exists) {
+          return prev.map(s => s.id === sid ? session : s);
+        }
+        return [session, ...prev];
+      });
+
+    } catch (e) {
+      console.error("Background Session Save Error:", e);
+    }
+  };
+
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleInputChange = (e: any) => {
@@ -725,6 +895,8 @@ function App() {
     const newHistory = [...messages, userMessage] as any[];
 
     setInput('');
+    // Synchronize UI immediately
+    setMessages(newHistory);
     await generateAIResponse(newHistory);
   };
 
@@ -737,6 +909,8 @@ function App() {
     // But we need to make sure index-1 is a user message.
     if (messages[index].role === 'assistant') {
       const prevHistory = messages.slice(0, index); // Keep everything before the AI message
+      // Synchronize UI immediately to remove the old assistant message and anything after
+      setMessages(prevHistory as any[]);
       await generateAIResponse(prevHistory);
     }
   };
@@ -751,6 +925,8 @@ function App() {
       const updatedUserMsg = { ...messages[index], content: newContent };
       const newHistory = [...prevHistory, updatedUserMsg];
 
+      // Synchronize UI immediately to update user message and remove old subsequent messages
+      setMessages(newHistory as any[]);
       await generateAIResponse(newHistory);
     }
   };
@@ -803,13 +979,36 @@ function App() {
         ) : (
           <>
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto scroll-smooth pb-48">
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 overflow-y-auto scroll-smooth pb-48"
+            >
               {messages.length === 0 && (
-                <div className="h-full flex flex-col items-center justify-center text-gray-400">
-                  <div className="bg-white/10 p-4 rounded-full mb-4">
-                    <Bot size={48} />
+                <div className="h-full flex flex-col items-center justify-center p-8 text-center">
+                  <div className="bg-white-50 dark:bg-black-900/20 p-4 rounded-2xl mb-6">
+                    <img src="/icon.png" alt="App Icon" className="w-8 h-8" />
                   </div>
-                  <p className="text-lg font-medium">How can I help you today?</p>
+                  <h2 className="text-2xl font-bold mb-2 text-gray-800 dark:text-gray-100">One Agent. Infinite Possibilities.</h2>
+                  <p className="text-gray-500 dark:text-gray-400 mb-8 max-w-xs">
+                    Seamlessly integrates the latest Skills and MCP tools into your browser.
+                  </p>
+
+                  <div className="w-full max-w-sm space-y-3">
+                    {[
+                      "Summarize with custom prompt...",
+                      "Call local API via MCP...",
+                      "Run code analysis..."
+                    ].map((text) => (
+                      <button
+                        key={text}
+                        onClick={() => setInput(text)}
+                        className="w-full p-3 text-left text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors shadow-sm"
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
               {messages.map((m: any, index: number) => {
@@ -834,6 +1033,7 @@ function App() {
                     onEdit={handleEdit}
                     onDelete={handleDeleteMessage}
                     isStreaming={isStreaming && isLast}
+                    isGenerating={isStreaming}
                     isLast={isLast}
                     showBorder={showBorder}
                     imageIds={m.imageIds}
@@ -845,6 +1045,15 @@ function App() {
 
             {/* Input Area (Fixed Overlay) */}
             <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-white via-white to-transparent dark:from-gray-900 dark:via-gray-900 pb-4 pt-10 px-4 z-20">
+              {/* Skills Indicator */}
+              {activeSkills.length > 0 && (
+                <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-xs">
+                  <Zap size={14} className="text-yellow-500" />
+                  <span className="text-yellow-700 dark:text-yellow-400">
+                    Using: {activeSkills.join(', ')}
+                  </span>
+                </div>
+              )}
               <ChatInput
                 value={input}
                 onChange={handleInputChange}
@@ -887,6 +1096,11 @@ function App() {
                   // WAIT, we don't have a `settings` state in App component yet!
                   // I need to add `settings` state to App component first.
                   await saveSettings(newSettings);
+                }}
+                isStreaming={isStreaming}
+                onStop={() => {
+                  stopRequestedRef.current = true;
+                  setIsStreaming(false);
                 }}
               />
             </div>
