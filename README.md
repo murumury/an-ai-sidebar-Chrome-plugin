@@ -1,22 +1,24 @@
 # SideAgent (Chrome Extension)
 
-SideAgent: Sidebar AI Assistant with MCP Client.
+**SideAgent** is an advanced AI Sidebar for Chrome that bridges the gap between web browsing, local tools (MCP), and customizable AI skills. It's built for power users who want more than just a chat bot—they want an agent that can see the page, use tools, and adapt to specific workflows.
 
+![SideAgent](public/icon.png)
 
-## Features
+## ✨ Key Features
 
-- **Context Awareness**: Automatically reads the content of the active tab to provide relevant answers.
-- **Multi-Provider Support**: Supports OpenAI, Google Gemini, DeepSeek, Grok, and custom OpenAI-compatible endpoints.
-- **MCP Support**: Integration with [Model Context Protocol](https://modelcontextprotocol.io/) to extend capabilities with local tools (e.g., executing scripts, file system access).
-- **Rich Chat Interface**:
-  - Markdown rendering with syntax highlighting for code blocks.
-  - WeChat-style comfortable UI with dark mode support (follows system preference).
-  - **Thinking Process Display**: Standardized UI for displaying reasoning chains from models like DeepSeek and Grok.
-- **Image Generation**: direct integration with DALL-E 3, Google Imagen, and Grok 2 for generating images within the chat.
-- **High Performance**: Smart caching of tools reduces latency for a snappier experience.
-- **Privacy Focused**: API keys and settings are stored locally in your browser.
+- **🧠 Context Awareness**: One-click access to the current page's content. Chat with any article, documentation, or PDF open in your browser.
+- **⚡ Extensible Skills System**: Import custom "Skills" (Markdown files) to teach the AI specific tasks (e.g., "Code Reviewer", "Tweet Generator"). Skills automatically activate based on your intent.
+- **🔌 MCP Support (Model Context Protocol)**: Connect to local tools and servers! Let the AI run scripts, access your file system, or query databases directly from the sidebar.
+- **🎨 Multi-Modal Capabilities**: 
+  - **Image Generation**: Generate images using DALL-E 3, Google Imagen, or Grok directly in the chat.
+  - **File Analysis**: Drag & drop text/code files to analyze them alongside your conversation.
+- **🚀 Multi-Provider Support**: 
+  - **Cloud**: OpenAI, Google Gemini, DeepSeek, Anthropic, Grok, Vivgrid.
+  - **Local**: Full support for **Ollama** (Llama 3, Mistral, Qwen, etc.).
+  - **Custom**: Any OpenAI-compatible endpoint.
+- **🛡️ Privacy Focused**: No middleman server. Your API keys and data stay in your browser's local storage.
 
-## Installation & Development
+## 🛠️ Installation & Development
 
 ### Prerequisites
 - Node.js (v20+ recommended)
@@ -24,104 +26,80 @@ SideAgent: Sidebar AI Assistant with MCP Client.
 
 ### Build Steps
 
-1. **Install Dependencies**:
+1. **Clone & Install**:
    ```bash
+   git clone https://github.com/murumury/an-ai-sidebar-Chrome-plugin.git
+   cd an-ai-sidebar-Chrome-plugin
    npm install
    ```
 
-2. **Build the Project**:
+2. **Build**:
    ```bash
    npm run build
    ```
-   This will generate a `dist` folder containing the compiled extension.
+   This generates a `dist` folder.
 
 3. **Load in Chrome**:
-   - Open Chrome and navigate to `chrome://extensions/`.
-   - Enable **Developer mode** (toggle in the top right).
+   - Go to `chrome://extensions/`.
+   - Enable **Developer mode** (top right).
    - Click **Load unpacked**.
-   - Select the `dist` folder from your project directory.
+   - Select the `dist` folder.
 
-## Usage Guide
+> **Tip**: For development with hot-reload, run `npm run dev` (note: requires browser reload for some changes).
 
-### 1. Opening the Sidebar
-Click the extension icon (✨) in the Chrome toolbar to open the AI Sidebar. The sidebar will open as a native Chrome side panel.
+## ⚙️ Configuration
 
-### 2. Configuration (Settings)
-Before using the chat, you need to configure your AI provider:
-1. Click the **Settings (Gear)** icon in the top header.
-2. Select your preferred **Provider** (e.g., OpenAI, DeepSeek).
-3. Enter your **API Key**.
-4. (Optional) Customize the Model and Temperature.
-5. Click **Save Changes**.
+### 1. AI Providers
+Click the **Settings (Gear)** icon to configure your AI brain.
+- **Standard**: Select OpenAI, DeepSeek, etc., and paste your API Key.
+- **Ollama (Local)**:
+  1. Start Ollama with CORS allowed: `OLLAMA_ORIGINS="*" ollama serve`
+  2. In SideAgent Settings, choose **Custom / Other**.
+  3. Base URL: `http://127.0.0.1:11434/v1`
+  4. Model: `llama3` (or your installed model).
 
-### 3. Chatting
-- Type your question in the input box at the bottom.
-- Press **Enter** to send.
-- Press **Shift + Enter** for a new line.
-- **Context Toggle**: The "File" icon above the input box indicates if the current page content is included in the conversation. Click it to toggle context on/off.
+### 2. MCP Servers (Tools)
+Extend the AI's reach beyond the browser.
+1. Go to **Settings > MCP Servers**.
+2. Add your local MCP server SSE endpoint (e.g., `http://localhost:3000/sse`).
+3. Toggle servers on/off.
+   > *Example: Connect a file-system MCP server to let SideAgent read/write files on your computer.*
 
-### 4. MCP (Model Context Protocol)
-This extension supports MCP to connect with local tools.
-1. In Settings, scroll to the **MCP Servers** section.
-2. Add your local MCP server URL (SSE endpoint).
-3. Toggle servers on/off as needed.
-The AI can then call tools provided by these servers during the conversation.
+### 3. Agent Skills ⚡
+Skills are specialized instruction sets that the AI "equips" when needed. SideAgent implements the [Agent Skills Standard](https://agentskills.io) (originally from Anthropic), ensuring compatibility with the broader ecosystem.
 
-### 5. Image Generation
-To generate images:
-1. Select an image-capable model from the model dropdown (e.g., `dall-e-3`, `gemini-2.5-flash-image`, `grok-2-image`).
-2. Type your image description (e.g., "A futuristic city with flying cars").
-3. The AI will generate and display the image directly in the chat.
+- **Standardized Format**: A skill is a folder containing a `SKILL.md` file with YAML frontmatter (metadata) and Markdown instructions.
+  ```markdown
+  ---
+  name: pdf-processing
+  description: Extract text from PDFs. Use when user asks about PDF files.
+  ---
+  # Instructions
+  1. ...
+  ```
+- **Progressive Disclosure**: SideAgent scans your skills but only loads the full instructions when relevant to your task, keeping context clean and fast.
+- **Manage Skills**: Go to **Settings > Agent Skills** to manage or import skills.
+- **Auto-Activation**: Just ask "Explain this code", and SideAgent automatically detects the intent and loads the `code-explainer` skill.
 
-## 🦙 Local Model Support (Ollama)
+## 📖 Usage Guide
 
-You can run models locally using [Ollama](https://ollama.com/) and connect them to this extension.
+### Chatting & Context
+- **Toggle Context**: Click the "File" icon above the input to let the AI read the current tab. (First use requires permission approval).
+- **Attachments**: Click the paperclip or drag & drop text files to analyze them.
 
-### 1. Solve Connection Refused (403 Forbidden)
-By default, Ollama restricts access from browser extensions for security. To allow the extension to connect, you must start Ollama with the `OLLAMA_ORIGINS` environment variable.
+### Image Generation
+- Select an image-capable model (e.g., `dall-e-3`, `gemini-2.5-flash-image`).
+- Prompt: "Generate an image of a cyberpunk city."
+- The image will appear directly in the chat history.
 
-1. **Quit** any running Ollama instance (Click the icon in the menu bar -> Quit).
-2. Open your Terminal.
-3. Run the following command:
+### Privacy Note
+SideAgent is a **client-side** extension. 
+- API calls go directly from your browser to the provider (OpenAI, DeepSeek, etc.).
+- Your API keys are stored in `chrome.storage.local`.
+- No tracking or analytics data is sent to the developer.
 
-```bash
-OLLAMA_ORIGINS="*" ollama serve
-```
+## 🤝 Contributing
+Issues and Pull Requests are welcome! Please check `src/` for the React + Vite + Tailwind source code.
 
-### 2. Configure Extension Settings
-Once Ollama is running:
-
-1. Open the AI Sidebar Settings.
-2. Set **Provider** to `Custom / Other`.
-3. Set **Base URL** to `http://127.0.0.1:11434/v1`.
-   > **Note**: The `/v1` suffix is important for OpenAI-compatible mode.
-4. Set **Model** to your installed model name (e.g., `qwen2.5:7b`, `llama3`).
-   > Run `ollama list` in terminal to see available models.
-5. Leave **API Key** empty.
-
-## Troubleshooting
-
-- **Extension not updating?** If you make code changes and rebuild (`npm run build`), you may need to click the **Reload** (refresh icon) on the extension card in `chrome://extensions/` to see the changes.
-- **Changes usually require a build**: Most changes (React components, logic) require running `npm run build` to update the `dist` folder.
-
-
-
-## 🚀 Vivgrid Integration (Optional)
-
-You can enhance SideAgent with **Vivgrid** for geo-distributed inference and serverless MCP tools.
-
-### 1. As an LLM Provider
-Use Vivgrid's high-performance inference backend:
-1.  **Provider**: Select `Vivgrid`.
-2.  **Base URL**: `https://api.vivgrid.com/v1`.
-3.  **API Key**: Enter your Vivgrid key.
-4.  **Model**: `default`.
-
-
-### 2. As an MCP Server Provider
-Connect to Vivgrid's managed MCP runtime to use cloud tools (Weather, Web Search, etc.):
-1.  In Settings, go to **MCP Servers**.
-2.  Add Server: `https://api.vivgrid.com/mcp/v1/<your_mcp_id>/sse`.
-3.  All cloud tools deployed on your Vivgrid account become instantly available.
-
-> **Note**: Vivgrid allows you to deploy your own functions as MCP tools using [YoMo](https://yomo.run). See [Vivgrid Documentation](https://vivgrid.com) for deployment details.
+## License
+MIT
