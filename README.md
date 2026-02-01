@@ -1,6 +1,7 @@
 # SideAgent (Chrome Extension)
 
 **SideAgent** is an advanced AI Sidebar for Chrome that bridges the gap between web browsing, local tools (MCP), and customizable AI skills. It's built for power users who want more than just a chat bot—they want an agent that can see the page, use tools, and adapt to specific workflows.
+
 [![SideAgent - Open source AI sidebar with MCP & Skills support. | Product Hunt](https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1070734&theme=light)](https://www.producthunt.com/posts/sideagent?utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-sideagent)
 
 ![SideAgent](public/icon.png)
